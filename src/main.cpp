@@ -1,11 +1,7 @@
 
 #include "Sun.hpp"
 #include "SensorController.h"
-#include <wiringPi.h>
-
-const int RELAY_A = 0; // wiringPi pin 0 = BCM GPIO 17
-const int RELAY_B = 2; // wiringPi pin 2 = BCM GPIO 27
-
+#include "GPIO.hpp"
 
 std::tm getUtcTime() {
     auto now = std::chrono::system_clock::now();
@@ -15,11 +11,17 @@ std::tm getUtcTime() {
 
 
 int main() {
-    wiringPiSetupGpio();
-    pinMode(17, OUTPUT);
-    digitalWrite(17, HIGH);
-    sleep(2);
-    digitalWrite(17, LOW);
+    GPIO gpio; // wiringPi pin 0
+    std::cout << "Ticks: " << std::endl;
+    while (true) {
+        int t = gpio.getTicks();
+        std::cout << "Ticks: " << t << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    }
+
+
+    return 0;
 
 
 
