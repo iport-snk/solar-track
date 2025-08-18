@@ -52,7 +52,10 @@ public:
                 if (azDelta == 0 || !isMoving) GPIO::stopAz(); 
                 if (!isMoving) break;
 
-                if (elDelta == 0 && azDelta == 0) state_.store(TrackerState::Idle);
+                if (!GPIO::isAzMov && !GPIO::isElMov) {
+                    state_.store(TrackerState::Idle);
+                    break;
+                }
                 std::cout << "az : " << azDelta << "\t\tel : " << elDelta << std::endl;
             }
         }).detach();

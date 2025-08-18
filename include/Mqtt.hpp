@@ -10,6 +10,7 @@
 
 #include <MQTTClient.h>
 #include "State.hpp"
+#include "GPIO.hpp"
 
 constexpr auto parseCommand = [](std::string_view input) {
     size_t p1 = input.find('|');
@@ -59,13 +60,15 @@ public:
 
                 std::cout << "[COMMAND] " << topic << " → " << payload << "\n";
                 // TODO: Parse and act on payload
-                if (cmd == "move") {
-                    TrackerFSM::handleMoveTo(p1, p2);
-                } else if (cmd == "stop") {
-                    TrackerFSM::handleStop();
-                } else if (cmd == "auto") {
-                    TrackerFSM::handleAuto();
-                };
+                if (            cmd == "move"   ) { TrackerFSM::handleMoveTo(p1, p2); } 
+                else if (       cmd == "stop"   ) { TrackerFSM::handleStop(); } 
+                else if (       cmd == "auto"   ) { TrackerFSM::handleAuto(); } 
+                else if (       cmd == "mu"     ) { GPIO::moveU(); } 
+                else if (       cmd == "md"     ) { GPIO::moveD(); } 
+                else if (       cmd == "me"     ) { GPIO::moveE(); } 
+                else if (       cmd == "mw"     ) { GPIO::moveW(); }
+                else if (       cmd == "sel"    ) { GPIO::stopEl(); }
+                else if (       cmd == "saz"    ) { GPIO::stopAz(); };
                 
 
                 MQTTClient_freeMessage(&message);

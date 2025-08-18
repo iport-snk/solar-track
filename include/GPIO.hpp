@@ -3,12 +3,14 @@
 #include <atomic>
 #include <functional>
 
-const int P25 = 26;
-const int P28 = 20; 
-const int P29 = 21; 
-const int P27 = 16; 
+//        wPi   BCM    Relay 
+const int P25 = 26; // -> 1
+const int P28 = 20; // -> 2
 
-const int CNTR = 17;
+const int P29 = 21; // -> 3
+const int P27 = 16; // -> 4
+
+const int CNTR = 17; 
 
 class GPIO {
 public:
@@ -36,13 +38,15 @@ public:
     void reset() {
         ticks.store(0);
     }
-    static void stopEl()        { digitalWrite(P25, HIGH);      digitalWrite(P28, HIGH);    };
-    static void moveU()         { digitalWrite(P25, HIGH);      digitalWrite(P28, LOW);     };
-    static void moveD()         { digitalWrite(P25, LOW);       digitalWrite(P28, HIGH);    };
+    inline static bool isElMov = false;
+    static void stopEl()        { digitalWrite(P25, HIGH);      digitalWrite(P28, HIGH);    isElMov = false; };
+    static void moveU()         { digitalWrite(P25, HIGH);      digitalWrite(P28, LOW);     isElMov = true; };
+    static void moveD()         { digitalWrite(P25, LOW);       digitalWrite(P28, HIGH);    isElMov = true; };
 
-    static void stopAz()        { digitalWrite(P29, HIGH);      digitalWrite(P27, HIGH);    };
-    static void moveE()         { digitalWrite(P29, HIGH);      digitalWrite(P27, LOW);     };
-    static void moveW()         { digitalWrite(P29, LOW);       digitalWrite(P27, HIGH);    };
+    inline static bool isAzMov = false;
+    static void stopAz()        { digitalWrite(P29, HIGH);      digitalWrite(P27, HIGH);    isAzMov = false;};
+    static void moveE()         { digitalWrite(P29, HIGH);      digitalWrite(P27, LOW);     isAzMov = true;};
+    static void moveW()         { digitalWrite(P29, LOW);       digitalWrite(P27, HIGH);    isAzMov = true;};
 
 
 
