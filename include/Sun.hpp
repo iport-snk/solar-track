@@ -12,7 +12,7 @@ inline std::tm getUtcTime() {
     return *gmtime(&tt);
 }
 
-inline std::tuple<double, double> getSunPosition() {
+inline std::tuple<float, float> getSunPosition() {
     std::tm utc = getUtcTime();
 
     spa_data spa{};
