@@ -3,8 +3,8 @@
 #include <optional>
 #include <tuple>
 #include "SensorController.h"
-#include "GPIO.hpp"
 #include "IntervalRunner.hpp"
+#include "Motors.hpp"
 // #include "Config.hpp"
 
 enum class TrackerState : uint8_t {
@@ -37,22 +37,22 @@ public:
         if (elDelta == 0 && azDelta == 0) return;
         state_ = TrackerState::Moving;
 
-        if (elDelta < 0) GPIO::moveD(); 
-        else if (elDelta > 0) GPIO::moveU();
+        if (elDelta < 0) Motors::moveD(); 
+        else if (elDelta > 0) Motors::moveU();
 
-        if (azDelta < 0) GPIO::moveE(); 
-        else if (azDelta > 0) GPIO::moveW();
+        if (azDelta < 0) Motors::moveE(); 
+        else if (azDelta > 0) Motors::moveW();
 
         std::thread([=]() {
             while(true) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
                 auto [azDelta, elDelta] = SensorController::deltaTarget(az, el); 
                 bool isMoving = state_.load() == TrackerState::Moving;
-                if (elDelta == 0 || !isMoving) GPIO::stopEl(); 
-                if (azDelta == 0 || !isMoving) GPIO::stopAz(); 
+                if (elDelta == 0 || !isMoving) Motors::stopEl(); 
+                if (azDelta == 0 || !isMoving) Motors::stopAz(); 
                 if (!isMoving) break;
 
-                if (!GPIO::isAzMov && !GPIO::isElMov) {
+                if (!Motors::isAzMov && !Motors::isElMov) {
                     state_.store(TrackerState::Idle);
                     break;
                 }

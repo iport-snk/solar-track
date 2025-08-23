@@ -1,6 +1,6 @@
+#include <cmath>
 #include "SensorController.h"
 #include "Config.hpp"
-#include <cmath>
 
 SensorController* SensorController::Instance = nullptr;
 SensorController::SensorController() {}
@@ -10,10 +10,12 @@ AHRSPacket SensorController::AHRS() {
     std::lock_guard<std::mutex> lock(Instance->ahrsMutex);
     return Instance->ahrs;
 };
+
 IMUPacket SensorController::IMU() {
     std::lock_guard<std::mutex> lock(Instance->imuMutex);
     return Instance->imu;
 };
+
 void SensorController::Start() {
     if (!Instance) {
         Instance = new SensorController();
@@ -22,7 +24,7 @@ void SensorController::Start() {
 };
 
 void SensorController::InitSerial() {
-    fd = open("/dev/ttyUSB0", O_RDONLY | O_NOCTTY );
+    fd = open(CFG::ttyIMU, O_RDONLY | O_NOCTTY );
     struct termios options;
     tcgetattr(fd, &options);
 
@@ -57,7 +59,6 @@ std::tuple<float, float> SensorController::deltaTarget(float azDegree, float elD
     };
 };
 
-
 void SensorController::ProcessPaket(PacketType packetType) { 
     if (packetType == PacketType::AHRS) {
         std::lock_guard<std::mutex> lock(ahrsMutex);
@@ -69,26 +70,26 @@ void SensorController::ProcessPaket(PacketType packetType) {
 };
 
 void SensorController::LaunchThread() {
-        running = true;
-        std::thread([this]() {
-            Instance->InitSerial();
+    running = true;
+    std::thread([this]() {
+        Instance->InitSerial();
 
-            if (fd < 0) {
-                perror("Failed to open serial port");
-                return;
-            }
+        if (fd < 0) {
+            perror("Failed to open serial port");
+            return;
+        }
 
-            uint8_t byte;
-            uint8_t header[6]; // 0: type 1: len
+        uint8_t byte;
+        uint8_t header[6]; // 0: type 1: len
 
-            while (true) {
-                read(fd, &byte, 1);
-                if (byte == STF) {
-                    read(fd, header, 6);
-                    ProcessPaket(static_cast<PacketType>(header[0]));
-                } 
-            }
+        while (true) {
+            read(fd, &byte, 1);
+            if (byte == STF) {
+                read(fd, header, 6);
+                ProcessPaket(static_cast<PacketType>(header[0]));
+            } 
+        }
 
-            close(fd);
-        }).detach();
-    }
+        close(fd);
+    }).detach();
+}

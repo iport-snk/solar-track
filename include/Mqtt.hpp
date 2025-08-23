@@ -10,7 +10,7 @@
 
 #include <MQTTClient.h>
 #include "State.hpp"
-#include "GPIO.hpp"
+#include "Motors.hpp"
 
 constexpr auto parseCommand = [](std::string_view input) {
     size_t p1 = input.find('|');
@@ -63,12 +63,13 @@ public:
                 if (            cmd == "move"   ) { TrackerFSM::handleMoveTo(p1, p2); } 
                 else if (       cmd == "stop"   ) { TrackerFSM::handleStop(); } 
                 else if (       cmd == "auto"   ) { TrackerFSM::handleAuto(); } 
-                else if (       cmd == "mu"     ) { GPIO::moveU(); } 
-                else if (       cmd == "md"     ) { GPIO::moveD(); } 
-                else if (       cmd == "me"     ) { GPIO::moveE(); } 
-                else if (       cmd == "mw"     ) { GPIO::moveW(); }
-                else if (       cmd == "sel"    ) { GPIO::stopEl(); }
-                else if (       cmd == "saz"    ) { GPIO::stopAz(); };
+                else if (       cmd == "mu"     ) { Motors::moveU(); } 
+                else if (       cmd == "md"     ) { Motors::moveD(); } 
+                else if (       cmd == "me"     ) { Motors::moveE(); } 
+                else if (       cmd == "mw"     ) { Motors::moveW(); }
+                else if (       cmd == "sel"    ) { Motors::stopEl(); }
+                else if (       cmd == "saz"    ) { Motors::stopAz(); }
+                else if (       cmd == "relays" ) { Motors::relays(); };
                 
 
                 MQTTClient_freeMessage(&message);

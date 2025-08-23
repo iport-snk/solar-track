@@ -1,20 +1,25 @@
 
 #include "Sun.hpp"
 #include "SensorController.h"
-#include "GPIO.hpp"
 #include "Mqtt.hpp"
+#include "SerialWorker.h"
 
 int main() {
+    SerialWorker::init();
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+
+    auto future = SerialWorker::CMD("PING");
+
+    // Wait for response (blocking)
+    std::string response = future.get();
+
+
     SensorController::Start();
     MqttClient::init("tcp://broker.hivemq.com", 1883);
     
 
-
-
-    GPIO gpio; // wiringPi pin 0
-
-
-    
+  
 
     auto [azimuth, elevation] = Sun::getSunPosition();
     std::cout << "Sun : " << azimuth << " |  " << elevation << std::endl;

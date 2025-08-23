@@ -2,11 +2,14 @@
 #include <string>
 
 namespace CFG {
-    float elThresholdDegrees = 5;
-    float azThresholdDegrees = 5;
+    inline const float elThresholdDegrees = 5;
+    inline const float azThresholdDegrees = 5;
 
-    int motorTimeoutMs = 500;
-    int relayPinForward = 17;
-    int relayPinReverse = 18;
-    std::string mqttTopic = "solar/tracker";
+    inline const int motorTimeoutMs = 500;
+    inline const int relayPinForward = 17;
+    inline const int relayPinReverse = 18;
+    inline std::string mqttTopic = "solar/tracker";
+
+    inline const char* ttyMotors = "/dev/ttyACM0";
+    inline const char* ttyIMU = "/dev/ttyUSB0";
 };
