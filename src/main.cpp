@@ -9,14 +9,18 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
 
+    // TODO: need to go through check list ensuring Arduino functioning well
+    // do the same with N100
     auto future = SerialWorker::CMD("PING");
-
-    // Wait for response (blocking)
     std::string response = future.get();
+    std::cout << response << std::endl;
 
 
     SensorController::Start();
-    MqttClient::init("tcp://broker.hivemq.com", 1883);
+    MqttClient::init();
+
+    //
+    // =========== END of tests
     
 
   

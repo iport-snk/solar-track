@@ -20,6 +20,29 @@ public:
         return fsm;
     }
 
+    static std::string handleCmd(std::string_view topic, std::string_view payload) {
+        std::cout << "[COMMAND] " << topic << " → " << payload << "\n";
+        auto p = splitToVector(topic, '/');
+        std::string resp = "";
+        
+        if (p[1] == "move") { 
+            auto params = splitToVector(payload, ',');
+            float az = std::stof(params[1]);
+            float el = std::stof(params[0]);
+            TrackerFSM::handleMoveTo(el, az); 
+        } else if (p[1] == "stop") TrackerFSM::handleStop();
+        else if (p[1] == "auto") TrackerFSM::handleAuto();
+        else if (       p[1] == "mu"     ) { Motors::moveU(); } 
+        else if (       p[1] == "md"     ) { Motors::moveD(); } 
+        else if (       p[1] == "me"     ) { Motors::moveE(); } 
+        else if (       p[1] == "mw"     ) { Motors::moveW(); }
+        else if (       p[1] == "sel"    ) { Motors::stopEl(); }
+        else if (       p[1] == "saz"    ) { Motors::stopAz(); }
+        else if (       p[1] == "relays" )  resp = Motors::relays(); 
+
+        return resp;
+    };
+
     static void handleStop() {
         if (trackerThread) trackerThread->stop();      // stop chasing thread
         state_ = TrackerState::Idle;
@@ -31,7 +54,7 @@ public:
         }, 1000);
     }
 
-    static void handleMoveTo(float az, float el) {
+    static void handleMoveTo(float el, float az) {
         if (state_.load() == TrackerState::Moving) return;
         auto [azDelta, elDelta] = SensorController::deltaTarget(az, el); 
         if (elDelta == 0 && azDelta == 0) return;
@@ -46,6 +69,7 @@ public:
         std::thread([=]() {
             while(true) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                std::string relays = Motors::relays();
                 auto [azDelta, elDelta] = SensorController::deltaTarget(az, el); 
                 bool isMoving = state_.load() == TrackerState::Moving;
                 if (elDelta == 0 || !isMoving) Motors::stopEl(); 

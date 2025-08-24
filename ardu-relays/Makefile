@@ -1,4 +1,4 @@
-SKETCH=/home/solar/solar-motors/solar-motors.ino
+SKETCH=ardu-relays.ino
 FQBN=arduino:megaavr:nona4809
 PORT=/dev/ttyACM0
 

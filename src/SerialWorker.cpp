@@ -14,16 +14,14 @@ std::unique_ptr<SerialWorker> SerialWorker::instance_ = nullptr;
 
 const auto ttl = std::chrono::milliseconds(1000);
 
-std::vector<std::string> splitToVector( std::string_view view, char delimiter) {
-    std::vector<std::string> result;
-    for (auto&& subrange : view  | std::views::split(delimiter))  result.emplace_back(subrange.begin(), subrange.end());
-    return result;
-}
-
 void SerialWorker::init() {
     if (!instance_) {
         instance_ = std::make_unique<SerialWorker>();
     }
+}
+
+void SerialWorker::SEND(const std::string& command) {
+    write(instance_->fd_, command.c_str(), command.size());
 }
 
 std::future<std::string> SerialWorker::CMD(const std::string& command) {
@@ -132,7 +130,7 @@ void SerialWorker::ioLoop() {
 
         buffer[index++] = byte;
 
-        if (byte == '\n' || index >= sizeof(buffer)) {
+        if (byte == '\n' || byte == '\r' || index >= sizeof(buffer)) {
             std::string_view view(buffer, index - 1);
             auto tokens = splitToVector(view , ':');
 

@@ -14,6 +14,7 @@ class SerialWorker {
 public:
     static void init();  // Explicit setup
     static std::future<std::string> CMD(const std::string& command);
+    static void SEND(const std::string& msg);
     SerialWorker();
     ~SerialWorker();
 

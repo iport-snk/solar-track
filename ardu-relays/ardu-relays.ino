@@ -1,6 +1,6 @@
 // TESTS
-//float elCurr = 6;
-//float azCurr = 6;
+float elCurr = 6;
+float azCurr = 6;
 // END TESTS
 #define STF_BYTE 0xAA
 bool dump_amp = false;
@@ -13,6 +13,11 @@ enum MotorState {
   RICHED_CW,
   RICHED_CCW,
   ERROR
+};
+enum ERRORS {
+  NONE,
+  OVERCURR,
+  TWODIRS
 };
 
 // 🧰 Motor configuration struct
@@ -27,12 +32,13 @@ struct MotorSettings {
   float CURR;
   unsigned long STATE_TIME;
   MotorState state;
+  ERRORS err;
 };
 
 // 🧵 Motor array: Elevation and Azimuth
 MotorSettings MOTORS[] = {
-  {1, A0, 4, 5, 10, 5, 200, 0, 0, IDLE},     // Elevation
-  {2, A1, 6, 7, 10, 5, 200, 0, 0, IDLE}      // Azimuth
+  {1, A0, 4, 5, 10, 5, 200, 0, 0, IDLE, ERRORS::NONE},     // Elevation
+  {2, A1, 6, 7, 10, 5, 200, 0, 0, IDLE, ERRORS::NONE}      // Azimuth
 };
 
 // 📟 Serial command buffer
@@ -41,16 +47,22 @@ char cmd[CMD_BUF_SIZE];
 int cmdIndex = 0;
 
 // 🏷️ Convert state to string
-const char* stateToString(MotorState s) {
-  switch (s) {
-    case IDLE: return "IDLE";
-    case MOVING_CW: return "MOVING_CW";
-    case MOVING_CCW: return "MOVING_CCW";
-    case RICHED_CW: return "RICHED_CW";
-    case RICHED_CCW: return "RICHED_CCW";
-    case ERROR: return "ERROR";
-    default: return "UNKNOWN";
+const char* prnState(MotorSettings* motor, uint32_t duration) {
+  char prn[64];
+  
+  const char* result = nullptr;
+  switch (motor->state) {
+    case IDLE:        result = "IDLE"; break;
+    case MOVING_CW:   result = "MOVING_CW"; break;
+    case MOVING_CCW:  result = "MOVING_CCW"; break;
+    case RICHED_CW:   result = "RICHED_CW"; break;
+    case RICHED_CCW:  result = "RICHED_CCW"; break;
+    case ERROR:       result = "ERR"; break;
+    default:          result = "UNKNOWN"; break;
   }
+
+  sprintf(prn, "%d:STATE:%s:%d:%d", motor->ID, result, motor->err, duration);
+  Serial.println(prn);
 }
 
 // 🚀 Setup routine
@@ -59,7 +71,7 @@ void setup() {
   for (uint8_t i = 0; i < 2; i++) {
     pinMode(MOTORS[i].CW_PIN, OUTPUT);
     pinMode(MOTORS[i].CCW_PIN, OUTPUT);
-    transitionState(&MOTORS[i], IDLE);
+    transitionState(&MOTORS[i], IDLE, ERRORS::NONE);
   }
 }
 
@@ -91,15 +103,15 @@ void readSerialInput() {
 
 // 🧭 Route commands
 void routeCommand(const char* input) {
-  if (strcmp(input, "ping") == 0)           Serial.println("pong 1.17");
+  if (strcmp(input, "ping") == 0)           Serial.println("pong 1.18");
   else if (strcmp(input, "reboot") == 0)    Reboot();
-  else if (strcmp(input, "ELCW") == 0)      transitionState(&MOTORS[0], MOVING_CW);
-  else if (strcmp(input, "ELCCW") == 0)     transitionState(&MOTORS[0], MOVING_CCW);
-  else if (strcmp(input, "ELSTOP") == 0)    transitionState(&MOTORS[0], IDLE);
-  else if (strcmp(input, "AZCW") == 0)      transitionState(&MOTORS[1], MOVING_CW);
-  else if (strcmp(input, "AZCCW") == 0)     transitionState(&MOTORS[1], MOVING_CCW);
-  else if (strcmp(input, "AZSTOP") == 0)    transitionState(&MOTORS[1], IDLE);
-  else if (strcmp(input, "STOP") == 0)      for (uint8_t i = 0; i < 2; i++) transitionState(&MOTORS[i], IDLE);
+  else if (strcmp(input, "ELCW") == 0)      transitionState(&MOTORS[0], MOVING_CW, ERRORS::NONE);
+  else if (strcmp(input, "ELCCW") == 0)     transitionState(&MOTORS[0], MOVING_CCW, ERRORS::NONE);
+  else if (strcmp(input, "ELSTOP") == 0)    transitionState(&MOTORS[0], IDLE, ERRORS::NONE);
+  else if (strcmp(input, "AZCW") == 0)      transitionState(&MOTORS[1], MOVING_CW, ERRORS::NONE);
+  else if (strcmp(input, "AZCCW") == 0)     transitionState(&MOTORS[1], MOVING_CCW, ERRORS::NONE);
+  else if (strcmp(input, "AZSTOP") == 0)    transitionState(&MOTORS[1], IDLE, ERRORS::NONE);
+  else if (strcmp(input, "STOP") == 0)      for (uint8_t i = 0; i < 2; i++) transitionState(&MOTORS[i], IDLE, ERRORS::NONE);
   else if (strcmp(input, "PRNAMP1") == 0)   dump_amp = true;
   else if (strcmp(input, "PRNAMP0") == 0)   dump_amp = false;
   else if (strncmp(input, "CMD:", 4) == 0)  execCmd(input);
@@ -125,22 +137,27 @@ void execCmd(const char* input) {
 
   // Extract ID
   const char* idStr = delim + 1;
-  uint32_t id = strtoul(idStr, nullptr, 16); // Accepts decimal or hex
 
-  // Dispatch
-  //Serial.print("CMD: "); Serial.println(cmdCode);
-  //Serial.print("ID: "); Serial.println(id, HEX);
+  char buff[64];
+  sprintf(buff, "ACK:%s:", idStr);
+  RelayState(buff);
+  Serial.write(STF_BYTE);
+  Serial.println(buff);
+}
 
-  Serial.write(STF_BYTE);         // Start-of-frame marker
-  Serial.print("ACK:");
-  Serial.print(idStr);          // Or HEX if preferred
-  Serial.print(":payload\n");
+void RelayState(char* to) {
+  sprintf(to + strlen(to), "%d%d%d%d", 
+    digitalRead(MOTORS[0].CW_PIN), 
+    digitalRead(MOTORS[0].CCW_PIN), 
+    digitalRead(MOTORS[1].CW_PIN), 
+    digitalRead(MOTORS[1].CCW_PIN) 
+  );
 }
 
 // 🔄 Reboot system
 void Reboot() {
   Serial.println("Rebooting...");
-  for (uint8_t i = 0; i < 2; i++) transitionState(&MOTORS[i], IDLE);
+  for (uint8_t i = 0; i < 2; i++) transitionState(&MOTORS[i], IDLE, ERRORS::NONE);
   asm volatile ("jmp 0");
 }
 
@@ -157,8 +174,9 @@ void StopMotor(MotorSettings* motor) {
 }
 
 // 🔁 Transition motor state
-void transitionState(MotorSettings* motor, MotorState next) {
+void transitionState(MotorSettings* motor, MotorState next, ERRORS err) {
   // GUARDS
+  motor->err = err;
   if (motor->state == ERROR) return;
   if (next == MOVING_CW && motor->state == RICHED_CW) return;
   if (next == MOVING_CCW && motor->state == RICHED_CCW) return;
@@ -172,10 +190,7 @@ void transitionState(MotorSettings* motor, MotorState next) {
   } else {
     StopMotor(motor);
   }
-
-  char prn[64];
-  sprintf(prn, "%d:STATE:%s:%d", motor->ID, stateToString(next), duration);
-  Serial.println(prn);
+  prnState(motor, duration);
 }
 
 // 🔍 Read current in amps
@@ -184,9 +199,9 @@ void readCurrentAmps(MotorSettings* motor) {
   float voltage = raw * (5.0 / 1023.0);
 
   
-  motor->CURR = (voltage - 2.5) / 0.100;
+  // motor->CURR = (voltage - 2.5) / 0.100;
   // TESTS
-  // motor->CURR = motor->CURR_PIN == A0 ? elCurr : azCurr;
+  motor->CURR = motor->CURR_PIN == A0 ? elCurr : azCurr;
 
   if (dump_amp) {
     char prn[64];
@@ -209,19 +224,19 @@ void guardMotor(MotorSettings* motor) {
   bool isMovingCCW = digitalRead(motor->CCW_PIN);
 
   if (isMovingCW && isMovingCCW) {
-    transitionState(motor, ERROR);
+    transitionState(motor, ERROR, ERRORS::TWODIRS);
     return;
   }
 
   if (elapsed < motor->CURR_BURST_MS) return;
 
   if (motor->CURR > motor->OVERCURR) {
-    transitionState(motor, ERROR);
+    transitionState(motor, ERROR, ERRORS::OVERCURR);
     return;
   }
 
   if (motor->CURR < motor->CURR_MIN) {
-    transitionState(motor, isMovingCW ? RICHED_CW : RICHED_CCW);
+    transitionState(motor, isMovingCW ? RICHED_CW : RICHED_CCW, ERRORS::NONE);
     return;
   }
 }
@@ -239,7 +254,7 @@ void runStateMachine() {
 // 🚨 Handle error state
 void handleErrorState() {
   for (uint8_t i = 0; i < 2; i++) {
-    transitionState(&MOTORS[i], ERROR);
+    // transitionState(&MOTORS[i], ERROR);
   }
   Serial.println("ERROR");
 }

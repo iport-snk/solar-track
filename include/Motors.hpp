@@ -51,16 +51,18 @@ tcflush(m.fd_, TCIOFLUSH);
         if (fd_ >= 0) write(fd_, cmd, strlen(cmd));
     }
 
-    static void moveU() {}
-    static void moveD() {}
-    static void moveE() {}
-    static void moveW() {}
-    static void stopEl() {}
-    static void stopAz() {}
-    static void relays() {
+    static void moveU() { SerialWorker::SEND("ELCW\n"); }
+    static void moveD() { SerialWorker::SEND("ELCCW\n"); }
+    static void moveE() { SerialWorker::SEND("AZCW\n");  }
+    static void moveW() { SerialWorker::SEND("AZCCW\n"); }
+    static void stopEl() {SerialWorker::SEND("ELSTOP\n"); }
+    static void stopAz() {SerialWorker::SEND("AZSTOP\n"); }
+    static std::string relays() {
         auto future = SerialWorker::CMD("PING");
-        std::string response = future.get();
-        std::cout <<  response << std::endl;
+        std::string state = future.get();
+        isAzMov = (state[2] == '1' || state[3] == '1');
+        isElMov = (state[0] == '1' || state[1] == '1');
+        return state;
     }
     static bool isAzMov;
     static bool isElMov;
