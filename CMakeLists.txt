@@ -22,5 +22,7 @@ file(GLOB SRC_FILES "src/*.cpp" "src/*.c")
 add_executable(main ${SRC_FILES})
 target_link_libraries(
     main 
-    /usr/local/lib/libpaho-mqtt3cs.so
+    paho-mqtt3cs
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
