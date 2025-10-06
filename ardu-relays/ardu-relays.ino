@@ -20,9 +20,12 @@ enum ERRORS {
   TWODIRS
 };
 
-// � Azimuth position tracking
+// 🧭 Azimuth position tracking
 uint8_t AZ_SENSOR_PIN = A7;
 float azimuth_degrees = 0.0;
+float target_azimuth = -1.0;  // Target azimuth (-1 means no target)
+bool auto_azimuth_active = false;  // Whether auto-azimuth movement is active
+float azimuth_tolerance = 2.0;  // Tolerance in degrees for reaching target
 
 // �🧰 Motor configuration struct
 struct MotorSettings {
@@ -124,7 +127,7 @@ void readSerialInput() {
 
 // 🧭 Route commands
 void routeCommand(const char* input) {
-  if (strcmp(input, "ping") == 0)           Serial.println("pong 1.18");
+  if (strcmp(input, "ping") == 0)           Serial.println("pong 1.20");
   else if (strcmp(input, "reboot") == 0)    Reboot();
   else if (strcmp(input, "ELCW") == 0)      transitionState(&MOTORS[0], MOVING_CW, ERRORS::NONE);
   else if (strcmp(input, "ELCCW") == 0)     transitionState(&MOTORS[0], MOVING_CCW, ERRORS::NONE);
@@ -136,6 +139,7 @@ void routeCommand(const char* input) {
   else if (strcmp(input, "PRNAMP1") == 0)   dump_amp = true;
   else if (strcmp(input, "PRNAMP0") == 0)   dump_amp = false;
   else if (strcmp(input, "AZPOS") == 0)     reportAzimuthPosition();
+  else if (strncmp(input, "AZ:", 3) == 0)   azMove(input);
   else if (strncmp(input, "CMD:", 4) == 0)  execCmd(input);
   //else if (strcmp(input, "M1_0") == 0)      elCurr = 12;
   else {
@@ -221,6 +225,33 @@ void transitionState(MotorSettings* motor, MotorState next, ERRORS err) {
 void readAzimuthPosition() {
   int raw = analogRead(AZ_SENSOR_PIN);
   azimuth_degrees = (raw / 1023.0) * 360.0;
+  
+  // Check if we need to stop at target azimuth
+  if (auto_azimuth_active && target_azimuth >= 0) {
+    bool should_stop = false;
+    
+    // Check if we've reached or passed the target based on motor direction
+    if (MOTORS[1].state == MOVING_CW) {
+      // Moving clockwise: stop if we've reached or passed target
+      should_stop = (azimuth_degrees >= target_azimuth - azimuth_tolerance);
+    } else if (MOTORS[1].state == MOVING_CCW) {
+      // Moving counter-clockwise: stop if we've reached or passed target  
+      should_stop = (azimuth_degrees <= target_azimuth + azimuth_tolerance);
+    }
+    
+    if (should_stop) {
+      // Stop the azimuth motor
+      transitionState(&MOTORS[1], IDLE, ERRORS::NONE);
+      auto_azimuth_active = false;
+      target_azimuth = -1.0;
+      
+      // Report that target was reached
+      char pos_str[8];
+      dtostrf(azimuth_degrees, 6, 2, pos_str);
+      Serial.print("AZ:TARGET_REACHED:");
+      Serial.println(pos_str);
+    }
+  }
 }
 
 // 📍 Report current azimuth position
@@ -229,6 +260,43 @@ void reportAzimuthPosition() {
   dtostrf(azimuth_degrees, 6, 2, pos_str);  // Format: "123.45"
   Serial.print("AZPOS:");
   Serial.println(pos_str);
+}
+
+// 🎯 Move azimuth to target angle
+void azMove(const char* input) {
+  // Parse target angle from "AZ:120" format
+  const char* angle_str = input + 3;  // Skip "AZ:"
+  target_azimuth = atof(angle_str);
+  
+  // Check if target is within valid range (40-340 degrees)
+  if (target_azimuth < 40 || target_azimuth > 340) {
+    Serial.println("AZ:ERROR_OUT_OF_RANGE");
+    return;
+  }
+  
+  // Check if already at target
+  float diff = fabs(target_azimuth - azimuth_degrees);
+  if (diff <= azimuth_tolerance) {
+    Serial.println("AZ:TARGET_REACHED");
+    return;
+  }
+  
+  auto_azimuth_active = true;
+  
+  // Simple direction logic: if target > current, go CW; if target < current, go CCW
+  if (target_azimuth > azimuth_degrees) {
+    // Move CW to reach target
+    transitionState(&MOTORS[1], MOVING_CW, ERRORS::NONE);
+    Serial.print("AZ:MOVING_CW_TO:");
+  } else {
+    // Move CCW to reach target
+    transitionState(&MOTORS[1], MOVING_CCW, ERRORS::NONE);
+    Serial.print("AZ:MOVING_CCW_TO:");
+  }
+  
+  char target_str[8];
+  dtostrf(target_azimuth, 6, 2, target_str);
+  Serial.println(target_str);
 }
 
 // 🔍 Read current in amps
