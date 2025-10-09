@@ -48,15 +48,11 @@ void SensorController::InitSerial() {
 
 };
 
-std::tuple<float, float> SensorController::deltaTarget(float azDegree, float elDegree) {
+float SensorController::deltaEl(float elDegree) {
     std::lock_guard<std::mutex> lock(Instance->ahrsMutex);
 
-    float azDelta = azDegree ? (Instance->ahrs.yaw  * (180.0 / M_PI) - azDegree) : 0 ;
     float elDelta = elDegree ? (Instance->ahrs.roll  * (180.0 / M_PI) - elDegree) : 0 ;
-    return {
-        std::abs(azDelta) > CFG::azThresholdDegrees ? azDelta : 0, 
-        std::abs(elDelta) > CFG::elThresholdDegrees ? elDelta : 0
-    };
+    return std::abs(elDelta) > CFG::elThresholdDegrees ? elDelta : 0;
 };
 
 void SensorController::ProcessPaket(PacketType packetType) { 

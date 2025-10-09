@@ -76,28 +76,27 @@ std::future<std::string> SerialWorker::cmd(const std::string& command) {
     auto future = promise.get_future();
     auto expires_at = std::chrono::steady_clock::now() + ttl;
 
-    uint32_t ack_id = instance_->nextAckId();
-
     {
         std::lock_guard<std::mutex> lock(instance_->mutex_);
-        instance_->pending_[ack_id] = std::make_tuple(std::move(promise), expires_at);
+        auto key = command.substr(0, command.find(':'));
+        instance_->pending_[key] = std::make_tuple(std::move(promise), expires_at);
     }
 
-    instance_->sendCommand(command, ack_id);
+    instance_->sendCommand(command);
     return future;
 }
 
-void SerialWorker::sendCommand(const std::string& command, uint32_t ack_id) {
+void SerialWorker::sendCommand(const std::string& command) {
     //std::string frame = "\xAA" + oss.str();
     std::ostringstream oss;
-    oss << "CMD:" << command << ':' << ack_id<< '\n';
+    oss << "CMD:" << command << '\n';
     std::string frame = oss.str();
 
     //tcflush(instance_->fd_, TCOFLUSH);
     write(instance_->fd_, frame.c_str(), frame.size());
 }
 
-void SerialWorker::onAck(uint32_t ack_id, std::string data) {
+void SerialWorker::onAck(std::string ack_id, std::string data) {
     std::promise<std::string> promise;
 
     {
@@ -132,21 +131,17 @@ void SerialWorker::ioLoop() {
 
         if (byte == '\n' || byte == '\r' || index >= sizeof(buffer)) {
             std::string_view view(buffer, index - 1);
+            std::cout << "Received: " << view << std::endl;
             auto tokens = splitToVector(view , ':');
 
             if (tokens[0] == "ACK") {
-                uint32_t id = std::strtoul(tokens[1].c_str(), nullptr, 10);
-                onAck(id, tokens[2]);
+                onAck(tokens[1], tokens[2]);
             }
             
             syncing = false;
             index = 0;
         }
     }
-}
-
-uint32_t SerialWorker::nextAckId() {
-    return ack_counter_++;
 }
 
 

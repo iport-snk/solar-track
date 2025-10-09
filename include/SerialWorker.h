@@ -22,9 +22,9 @@ private:
     // std::vector<std::string> splitToVector(const char* buffer, char delimiter);
     
     void ioLoop();
-    void sendCommand(const std::string& command, uint32_t ack_id);
-    void onAck(uint32_t ack_id, std::string data);
-    uint32_t nextAckId();
+    void sendCommand(const std::string& command);
+    void onAck(std::string ack_id, std::string data);
+
 
     std::future<std::string> cmd(const std::string& command);
 
@@ -35,8 +35,7 @@ private:
     std::atomic<bool> running_ = true;
 
     std::mutex mutex_;
-    std::unordered_map<uint32_t, std::tuple< std::promise<std::string>, Clock::time_point>> pending_;
-    uint32_t ack_counter_ = 1;
+    std::unordered_map<std::string, std::tuple< std::promise<std::string>, Clock::time_point>> pending_;
 
     static std::unique_ptr<SerialWorker> instance_;
 };

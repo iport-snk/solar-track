@@ -324,3 +324,6 @@ Ensure your system can connect to:
 - MQTT broker (configure in `Mqtt.hpp`)
 - Internet (for NTP time synchronization)
 - Local Arduino devices (via serial/USB)
+
+## Cheat sheet
+- arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200

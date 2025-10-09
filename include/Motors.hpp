@@ -57,11 +57,39 @@ tcflush(m.fd_, TCIOFLUSH);
     static void moveW() { SerialWorker::SEND("AZCCW\n"); }
     static void stopEl() {SerialWorker::SEND("ELSTOP\n"); }
     static void stopAz() {SerialWorker::SEND("AZSTOP\n"); }
+    static void az(std::string angle) {
+        auto future = SerialWorker::CMD("AZ:" + angle);
+        std::thread([future = std::move(future)]() mutable {
+            std::string result = future.get();
+            printf("AZ completed: %s\n", result.c_str());
+        }).detach();
+    }
+    static void el(std::string angle) {
+        int _a = 1;
+        SerialWorker::SEND("SNR:EL:" + std::to_string(_a++) + "\n");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        auto future = SerialWorker::CMD("EL:" + angle);
+        std::thread([future = std::move(future), _a]() mutable {
+            while (true) {
+                SerialWorker::SEND("SNR:EL:" + std::to_string(_a++) + "\n");
+                if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
+                    std::string result = future.get();
+                    printf("EL completed: %s (a=%d)\n", result.c_str(), _a);
+                    break;
+                }
+            }
+        }).detach();
+    }
     static std::string relays() {
-        auto future = SerialWorker::CMD("PING");
+        auto future = SerialWorker::CMD("MOTORS");
         std::string state = future.get();
         isAzMov = (state[2] == '1' || state[3] == '1');
         isElMov = (state[0] == '1' || state[1] == '1');
+        return state;
+    }
+    static std::string position() {
+        auto future = SerialWorker::CMD("POZ");
+        std::string state = future.get();
         return state;
     }
     static bool isAzMov;

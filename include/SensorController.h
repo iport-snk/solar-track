@@ -77,7 +77,7 @@ public:
     static void Stop();
     static IMUPacket IMU();
     static AHRSPacket AHRS();
-    static std::tuple<float, float> deltaTarget(float azDegree, float elDegree);
+    static float deltaEl(float elDegree);
 
 private:
     static SensorController* Instance;

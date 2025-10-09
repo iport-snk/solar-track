@@ -20,12 +20,9 @@ enum ERRORS {
   TWODIRS
 };
 
-// 🧭 Azimuth position tracking
 uint8_t AZ_SENSOR_PIN = A7;
-float azimuth_degrees = 0.0;
-float target_azimuth = -1.0;  // Target azimuth (-1 means no target)
-bool auto_azimuth_active = false;  // Whether auto-azimuth movement is active
-float azimuth_tolerance = 2.0;  // Tolerance in degrees for reaching target
+uint16_t tolerance = 2;  // Tolerance in degrees for reaching target
+
 
 // �🧰 Motor configuration struct
 struct MotorSettings {
@@ -37,15 +34,20 @@ struct MotorSettings {
   float CURR_MIN;
   uint16_t CURR_BURST_MS;
   float CURR;
-  unsigned long STATE_TIME;  // Use unsigned long to match millis() return type
+  uint16_t angle_current;        // Current angle
+  uint16_t angle_target;         // Target angle
+  uint16_t angle_min;            // Minimum allowed angle
+  uint16_t angle_max;            // Maximum allowed angle
+  bool auto_move;             // Whether auto-move is active
+  unsigned long STATE_TIME;   // Use unsigned long to match millis() return type
   MotorState state;
   ERRORS err;
 };
 
 // 🧵 Motor array: Elevation and Azimuth
 MotorSettings MOTORS[] = {
-  {1, A0, 10, 9, 10, 5, 200, 0, 0, IDLE, ERRORS::NONE},     // Elevation
-  {2, A1, 6, 5, 10, 5, 200, 0, 0, IDLE, ERRORS::NONE}      // Azimuth
+  {1, A0, 10, 9, 10, 5, 200, 0, -1, -1, 0,  90,  false, 0, IDLE, ERRORS::NONE},     // Elevation
+  {2, A1, 6,  5, 10, 5, 200, 0, -1, -1, 45, 315, false, 0, IDLE, ERRORS::NONE}      // Azimuth
 };
 
 // 📟 Serial command buffer
@@ -74,6 +76,8 @@ const char* prnState(MotorSettings* motor, unsigned long duration) {
 
 // 🚀 Setup routine
 void setup() {
+  pinMode(13, OUTPUT);
+
   Serial.begin(115200);
   now = millis();  // Initialize timing
   
@@ -100,8 +104,10 @@ void setup() {
 // 🔁 Main loop
 void loop() {
   now = millis();
-  
-  readAzimuthPosition();
+  MOTORS[1].angle_current = (analogRead(AZ_SENSOR_PIN) / 1023.0) * 360.0;
+
+  loopMotorPosition(&MOTORS[0]);
+  loopMotorPosition(&MOTORS[1]);
   readSerialInput();
   runStateMachine();
 }
@@ -127,7 +133,7 @@ void readSerialInput() {
 
 // 🧭 Route commands
 void routeCommand(const char* input) {
-  if (strcmp(input, "ping") == 0)           Serial.println("pong 1.20");
+  if (strcmp(input, "ping") == 0)           Serial.println("pong 1.23");
   else if (strcmp(input, "reboot") == 0)    Reboot();
   else if (strcmp(input, "ELCW") == 0)      transitionState(&MOTORS[0], MOVING_CW, ERRORS::NONE);
   else if (strcmp(input, "ELCCW") == 0)     transitionState(&MOTORS[0], MOVING_CCW, ERRORS::NONE);
@@ -139,8 +145,9 @@ void routeCommand(const char* input) {
   else if (strcmp(input, "PRNAMP1") == 0)   dump_amp = true;
   else if (strcmp(input, "PRNAMP0") == 0)   dump_amp = false;
   else if (strcmp(input, "AZPOS") == 0)     reportAzimuthPosition();
-  else if (strncmp(input, "AZ:", 3) == 0)   azMove(input);
+  else if (strcmp(input, "MOTORS") == 0)    reportMotorStates();
   else if (strncmp(input, "CMD:", 4) == 0)  execCmd(input);
+  else if (strncmp(input, "SNR:", 4) == 0)  setSensor(input);
   //else if (strcmp(input, "M1_0") == 0)      elCurr = 12;
   else {
     Serial.print("Unknown command: ");
@@ -148,31 +155,60 @@ void routeCommand(const char* input) {
   }
 }
 
+void setSensor(const char* input) {
+  const char* ptr = input + 4;            // Skip "SNR:"
+  const char* delim = strchr(ptr, ':');
+  if (!delim)  return;
+
+  char sensorName[16] = {};
+  strncpy(sensorName, ptr, delim - ptr);
+
+
+  digitalWrite(13, HIGH);
+  delay(50);
+  digitalWrite(13, LOW);
+  
+
+  if (strcmp(sensorName, "EL") == 0) MOTORS[0].angle_current = atof(delim + 1);
+
+}
+
 void execCmd(const char* input) {
   // Skip "CMD:"
   const char* ptr = input + 4;
 
-  // Find first delimiter
   const char* delim = strchr(ptr, ':');
-  if (!delim) return;
+  if (!delim) delim = ptr + strlen(ptr); // If no colon, point to end of string
 
   // Extract command code
-  size_t cmdLen = delim - ptr;
   char cmdCode[16] = {};
-  strncpy(cmdCode, ptr, cmdLen);
-
-  // Extract ID
-  const char* idStr = delim + 1;
+  strncpy(cmdCode, ptr, delim - ptr);
 
   char buff[64];
-  sprintf(buff, "ACK:%s:", idStr);
-  RelayState(buff);
+  
+  sprintf(buff, "ACK:%s:", cmdCode);
+  if (strcmp(cmdCode, "MOTORS") == 0) {
+    RelayState(buff);
+  } else if (strcmp(cmdCode, "POZ") == 0) {
+    sprintf(buff + strlen(buff), "%u:%u", (uint16_t)MOTORS[0].angle_current, (uint16_t)MOTORS[1].angle_current);
+  } else if (strcmp(cmdCode, "AZ") == 0 || strcmp(cmdCode, "EL") == 0) {
+    const char* targetAngleStr = delim + 1;
+    if (strlen(targetAngleStr) > 0) motorMove(cmdCode, atof(targetAngleStr));
+    return;
+  }
+  
   Serial.write(STF_BYTE);
   Serial.println(buff);
 }
 
+void reportMotorStates() {
+    char buff[16];
+    sprintf(buff, "MOTORS:");
+    RelayState(buff);
+    Serial.println(buff);
+}
+
 void RelayState(char* to) {
-  // Show motor states: 1=CW active, 0=inactive for each motor (EL_CW, EL_CCW, AZ_CW, AZ_CCW)
   sprintf(to + strlen(to), "%d%d%d%d", 
     (MOTORS[0].state == MOVING_CW) ? 1 : 0,
     (MOTORS[0].state == MOVING_CCW) ? 1 : 0,
@@ -181,35 +217,30 @@ void RelayState(char* to) {
   );
 }
 
-// 🔄 Reboot system
 void Reboot() {
   Serial.println("Rebooting...");
   for (uint8_t i = 0; i < 2; i++) transitionState(&MOTORS[i], IDLE, ERRORS::NONE);
   asm volatile ("jmp 0");
 }
 
-// 🌀 Start motor with PWM at 98% duty cycle
 void StartMotor(MotorSettings* motor, bool CW) {
   analogWrite(motor->CW_PIN,  CW ? 253 : 0);
-  analogWrite(motor->CCW_PIN, CW ? 0 : 253);
+  analogWrite(motor->CCW_PIN, CW ? 0 : 253);    // 98% duty cycle
 }
 
-// 🛑 Stop motor (set PWM to 0)
 void StopMotor(MotorSettings* motor) {
   analogWrite(motor->CW_PIN, 0);
   analogWrite(motor->CCW_PIN, 0);
 }
 
-// 🔁 Transition motor state
+
 void transitionState(MotorSettings* motor, MotorState next, ERRORS err) {
-  // GUARDS
   motor->err = err;
   if (motor->state == ERROR) return;
   if (next == MOVING_CW && motor->state == RICHED_CW) return;
   if (next == MOVING_CCW && motor->state == RICHED_CCW) return;
 
   motor->state = next;
-  // Overflow-safe duration calculation using unsigned arithmetic
   unsigned long duration = now - motor->STATE_TIME;  // Direct unsigned subtraction
   motor->STATE_TIME = now;
 
@@ -222,34 +253,33 @@ void transitionState(MotorSettings* motor, MotorState next, ERRORS err) {
 }
 
 // 🧭 Read azimuth position sensor
-void readAzimuthPosition() {
-  int raw = analogRead(AZ_SENSOR_PIN);
-  azimuth_degrees = (raw / 1023.0) * 360.0;
-  
-  // Check if we need to stop at target azimuth
-  if (auto_azimuth_active && target_azimuth >= 0) {
+void loopMotorPosition(MotorSettings* motor) {
+  // Check if we need to stop at target angle
+
+
+  if (motor->auto_move && motor->angle_target >= 0) {
     bool should_stop = false;
+
     
     // Check if we've reached or passed the target based on motor direction
-    if (MOTORS[1].state == MOVING_CW) {
+    if (motor->state == MOVING_CW) {
       // Moving clockwise: stop if we've reached or passed target
-      should_stop = (azimuth_degrees >= target_azimuth - azimuth_tolerance);
-    } else if (MOTORS[1].state == MOVING_CCW) {
-      // Moving counter-clockwise: stop if we've reached or passed target  
-      should_stop = (azimuth_degrees <= target_azimuth + azimuth_tolerance);
+      should_stop = (motor->angle_current >= motor->angle_target - tolerance);
+    } else if (motor->state == MOVING_CCW) {
+      // Moving counter-clockwise: stop if we've reached or passed target
+      should_stop = (motor->angle_current <= motor->angle_target + tolerance);
     }
     
     if (should_stop) {
-      // Stop the azimuth motor
-      transitionState(&MOTORS[1], IDLE, ERRORS::NONE);
-      auto_azimuth_active = false;
-      target_azimuth = -1.0;
+      // Stop the motor
+      transitionState(motor, IDLE, ERRORS::NONE);
+      motor->auto_move = false;
+      motor->angle_target = -1;
       
-      // Report that target was reached
-      char pos_str[8];
-      dtostrf(azimuth_degrees, 6, 2, pos_str);
-      Serial.print("AZ:TARGET_REACHED:");
-      Serial.println(pos_str);
+      char msg[32];
+      sprintf(msg, "ACK:%s:%u", motor->ID == 1 ? "EL" : "AZ", (uint16_t)(motor->angle_current));
+      Serial.write(STF_BYTE);
+      Serial.println(msg);
     }
   }
 }
@@ -257,47 +287,31 @@ void readAzimuthPosition() {
 // 📍 Report current azimuth position
 void reportAzimuthPosition() {
   char pos_str[8];
-  dtostrf(azimuth_degrees, 6, 2, pos_str);  // Format: "123.45"
+  dtostrf(MOTORS[1].angle_current, 6, 2, pos_str);  // Format: "123.45"
   Serial.print("AZPOS:");
   Serial.println(pos_str);
 }
 
 // 🎯 Move azimuth to target angle
-void azMove(const char* input) {
-  // Parse target angle from "AZ:120" format
-  const char* angle_str = input + 3;  // Skip "AZ:"
-  target_azimuth = atof(angle_str);
-  
-  // Check if target is within valid range (40-340 degrees)
-  if (target_azimuth < 40 || target_azimuth > 340) {
-    Serial.println("AZ:ERROR_OUT_OF_RANGE");
+void motorMove(char* cmd, uint16_t angle) {
+  MotorSettings* motor = (strcmp(cmd, "AZ") == 0) ? &MOTORS[1] : &MOTORS[0];
+  if (angle < motor->angle_min || angle > motor->angle_max) {
+    char msg[32];
+    sprintf(msg, "ACK:%s:OUT_OF_RANGE:%d:%d:%d", cmd, (uint16_t)angle, (uint16_t)motor->angle_min, (uint16_t)motor->angle_max);
+    Serial.write(STF_BYTE);
+    Serial.println(msg);
     return;
   }
-  
-  // Check if already at target
-  float diff = fabs(target_azimuth - azimuth_degrees);
-  if (diff <= azimuth_tolerance) {
-    Serial.println("AZ:TARGET_REACHED");
-    return;
-  }
-  
-  auto_azimuth_active = true;
-  
-  // Simple direction logic: if target > current, go CW; if target < current, go CCW
-  if (target_azimuth > azimuth_degrees) {
-    // Move CW to reach target
-    transitionState(&MOTORS[1], MOVING_CW, ERRORS::NONE);
-    Serial.print("AZ:MOVING_CW_TO:");
-  } else {
-    // Move CCW to reach target
-    transitionState(&MOTORS[1], MOVING_CCW, ERRORS::NONE);
-    Serial.print("AZ:MOVING_CCW_TO:");
-  }
-  
-  char target_str[8];
-  dtostrf(target_azimuth, 6, 2, target_str);
-  Serial.println(target_str);
+
+  motor->angle_target = angle;
+  motor->auto_move = true;
+  transitionState(
+    motor,
+    motor->angle_target > motor->angle_current ? MOVING_CW : MOVING_CCW,
+    ERRORS::NONE
+  );
 }
+
 
 // 🔍 Read current in amps
 void readCurrentAmps(MotorSettings* motor) {
@@ -318,16 +332,12 @@ void readCurrentAmps(MotorSettings* motor) {
   }
 }
 
-// 🛡️ Guard motor against faults
 void guardMotor(MotorSettings* motor) {
   if (!(motor->state == MOVING_CW || motor->state == MOVING_CCW)) return;
 
   readCurrentAmps(motor);
   
-  // Overflow-safe elapsed time calculation
-  unsigned long elapsed = now - motor->STATE_TIME;  // Direct unsigned subtraction
-
-  // With PWM, we track direction via motor state instead of digitalRead
+  unsigned long elapsed = now - motor->STATE_TIME;  
   bool isMovingCW = (motor->state == MOVING_CW);
   bool isMovingCCW = (motor->state == MOVING_CCW);
 
