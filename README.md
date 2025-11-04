@@ -141,8 +141,53 @@ Critical for accurate solar position calculations:
 
 5. **Run the executable**:
    ```bash
-   ./main
+   ./solar-tracker
    ```
+
+### Production Deployment (Systemd Service)
+
+For production deployment, the solar tracker can be installed as a systemd service for automatic startup and management:
+
+1. **Install the service**:
+   ```bash
+   sudo cp solar-tracker.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   sudo systemctl enable solar-tracker
+   ```
+
+2. **Service management commands**:
+   ```bash
+   # Start the service
+   sudo systemctl start solar-tracker
+   
+   # Stop the service
+   sudo systemctl stop solar-tracker
+   
+   # Restart the service
+   sudo systemctl restart solar-tracker
+   
+   # Check service status
+   sudo systemctl status solar-tracker
+   
+   # View live logs
+   sudo journalctl -u solar-tracker -f
+   
+   # View recent logs
+   sudo journalctl -u solar-tracker --lines=50
+   ```
+
+3. **Service features**:
+   - **Automatic startup**: Service starts automatically on system boot
+   - **Process management**: Systemd handles crashes and restarts
+   - **Logging**: All output is captured in system journal
+   - **Environment**: Proper timezone and library path configuration
+   - **User permissions**: Runs as the solar user with access to hardware
+
+The service configuration includes:
+- Timezone setting (Europe/Kyiv)
+- Library path for MQTT and OpenSSL libraries
+- Automatic restart on failure
+- Proper working directory and executable path
 
 ### Arduino Relay Controller
 
@@ -177,6 +222,7 @@ The project includes an Arduino-based relay controller for motor control:
 solar-track/
 ├── CMakeLists.txt          # CMake build configuration
 ├── README.md               # This file
+├── solar-tracker.service   # Systemd service configuration
 ├── ardu-relays/           # Arduino relay control code
 │   ├── ardu-relays.ino
 │   └── Makefile
@@ -283,6 +329,37 @@ The project uses header-based configuration. Edit the files in the `include/` di
    sudo timedatectl set-timezone Your/Timezone
    ```
 
+10. **Systemd service fails to start (203/EXEC error)**:
+    This usually indicates file permission or path issues:
+    ```bash
+    # Check if executable exists and is executable
+    ls -la /home/solar/solar-track/build/solar-tracker
+    
+    # Verify service file paths are correct
+    sudo systemctl cat solar-tracker.service
+    
+    # Check service logs for detailed error messages
+    sudo journalctl -u solar-tracker --lines=20
+    ```
+    
+    Common fixes:
+    - Ensure executable was built: `cd build && make`
+    - Check file permissions: `chmod +x build/solar-tracker`
+    - Verify service file paths match actual executable location
+    - Remove overly restrictive systemd security settings if needed
+
+11. **Systemd service starts but crashes immediately**:
+    Check the service logs for error details:
+    ```bash
+    sudo journalctl -u solar-tracker -f
+    ```
+    
+    Common causes:
+    - Missing library dependencies (check LD_LIBRARY_PATH)
+    - Arduino device not accessible (/dev/ttyACM0 permissions)
+    - Configuration file issues
+    - Network connectivity problems (MQTT broker)
+
 ### Build Clean
 
 To clean the build directory:
@@ -325,5 +402,36 @@ Ensure your system can connect to:
 - Internet (for NTP time synchronization)
 - Local Arduino devices (via serial/USB)
 
-## Cheat sheet
-- arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200
+## Cheat Sheet
+
+### Arduino Development
+```bash
+# Monitor Arduino serial output
+arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200
+
+# Compile and upload Arduino code
+cd ardu-relays && make all
+```
+
+### Service Management
+```bash
+# Service control
+sudo systemctl start solar-tracker     # Start service
+sudo systemctl stop solar-tracker      # Stop service
+sudo systemctl status solar-tracker    # Check status
+sudo systemctl restart solar-tracker   # Restart service
+
+# View logs
+sudo journalctl -u solar-tracker -f    # Live logs
+sudo journalctl -u solar-tracker --lines=50  # Recent logs
+```
+
+### Build Commands
+```bash
+# Build release version
+cd build && cmake -DCMAKE_BUILD_TYPE=Release .. && make
+
+# Clean rebuild
+rm -rf build && mkdir build && cd build && cmake .. && make
+```
+- 

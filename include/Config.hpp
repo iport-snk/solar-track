@@ -8,8 +8,15 @@
 #include <charconv>
 
 namespace CFG {
-    inline const float elThresholdDegrees = 5;
-    inline const float azThresholdDegrees = 5;
+    inline const float elThresholdDegrees = 3;
+    inline const float azThresholdDegrees = 3;
+
+    inline const uint16_t movingTimeoutSecs = 30;
+
+    inline const float azMaxDegrees = 305;
+    inline const float azMinDegrees = 55;
+    inline const float elMaxDegrees = 67;
+    inline const float elMinDegrees = 10;
 
     inline const int motorTimeoutMs = 500;
     inline const int relayPinForward = 17;
@@ -24,6 +31,8 @@ namespace CFG {
 
     inline const char* mqttUser = "rpi5solar";
     inline const char* mqttPass = "Vc!Q4pf9Kku*WFW";
+
+    inline const bool invertRoll = true;
 };
 
 constexpr auto splitToVector = []( std::string_view view, char delimiter) {

@@ -1,3 +1,6 @@
+// 50 - 310 : azimuth border limits
+int16_t azimuth_offset = 11; // Calibration offset if needed
+
 // TESTS
 float elCurr = 6;
 float azCurr = 6;
@@ -19,6 +22,8 @@ enum ERRORS {
   OVERCURR,
   TWODIRS
 };
+
+uint8_t VOLT_SENSOR_PIN = A6;
 
 uint8_t AZ_SENSOR_PIN = A7;
 uint16_t tolerance = 2;  // Tolerance in degrees for reaching target
@@ -46,7 +51,7 @@ struct MotorSettings {
 
 // 🧵 Motor array: Elevation and Azimuth
 MotorSettings MOTORS[] = {
-  {1, A0, 10, 9, 10, 5, 200, 0, -1, -1, 0,  90,  false, 0, IDLE, ERRORS::NONE},     // Elevation
+  {1, A0, 9, 10, 10, 5, 200, 0, -1, -1, 0,  90,  false, 0, IDLE, ERRORS::NONE},     // Elevation
   {2, A1, 6,  5, 10, 5, 200, 0, -1, -1, 45, 315, false, 0, IDLE, ERRORS::NONE}      // Azimuth
 };
 
@@ -101,10 +106,23 @@ void setup() {
   }
 }
 
+uint16_t readAzimuth() {
+  float sensor_degrees = (analogRead(AZ_SENSOR_PIN) / 1023.0) * 360.0;
+  return ((int16_t)sensor_degrees - azimuth_offset + 360) % 360;
+}
+
+void readVoltage() {
+  float sensor_voltage = (analogRead(VOLT_SENSOR_PIN) / 1023.0) * 5.25;
+  Serial.print("Voltage: ");
+  Serial.println(sensor_voltage);
+}
+
+
+
 // 🔁 Main loop
 void loop() {
   now = millis();
-  MOTORS[1].angle_current = (analogRead(AZ_SENSOR_PIN) / 1023.0) * 360.0;
+  MOTORS[1].angle_current =  readAzimuth();
 
   loopMotorPosition(&MOTORS[0]);
   loopMotorPosition(&MOTORS[1]);
@@ -163,14 +181,7 @@ void setSensor(const char* input) {
   char sensorName[16] = {};
   strncpy(sensorName, ptr, delim - ptr);
 
-
-  digitalWrite(13, HIGH);
-  delay(50);
-  digitalWrite(13, LOW);
-  
-
   if (strcmp(sensorName, "EL") == 0) MOTORS[0].angle_current = atof(delim + 1);
-
 }
 
 void execCmd(const char* input) {
@@ -190,7 +201,7 @@ void execCmd(const char* input) {
   if (strcmp(cmdCode, "MOTORS") == 0) {
     RelayState(buff);
   } else if (strcmp(cmdCode, "POZ") == 0) {
-    sprintf(buff + strlen(buff), "%u:%u", (uint16_t)MOTORS[0].angle_current, (uint16_t)MOTORS[1].angle_current);
+    sprintf(buff + strlen(buff), "%u~%u", (uint16_t)MOTORS[0].angle_current, (uint16_t)MOTORS[1].angle_current);
   } else if (strcmp(cmdCode, "AZ") == 0 || strcmp(cmdCode, "EL") == 0) {
     const char* targetAngleStr = delim + 1;
     if (strlen(targetAngleStr) > 0) motorMove(cmdCode, atof(targetAngleStr));
@@ -258,18 +269,10 @@ void loopMotorPosition(MotorSettings* motor) {
 
 
   if (motor->auto_move && motor->angle_target >= 0) {
-    bool should_stop = false;
-
-    
-    // Check if we've reached or passed the target based on motor direction
-    if (motor->state == MOVING_CW) {
-      // Moving clockwise: stop if we've reached or passed target
-      should_stop = (motor->angle_current >= motor->angle_target - tolerance);
-    } else if (motor->state == MOVING_CCW) {
-      // Moving counter-clockwise: stop if we've reached or passed target
-      should_stop = (motor->angle_current <= motor->angle_target + tolerance);
-    }
-    
+    bool should_stop = (motor->state == MOVING_CW) ? 
+      (motor->angle_current >= motor->angle_target) : 
+      (motor->angle_current <= motor->angle_target);
+  
     if (should_stop) {
       // Stop the motor
       transitionState(motor, IDLE, ERRORS::NONE);

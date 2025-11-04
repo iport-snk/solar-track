@@ -77,12 +77,14 @@ public:
     static void Stop();
     static IMUPacket IMU();
     static AHRSPacket AHRS();
+    static float getRoll();
     static float deltaEl(float elDegree);
 
 private:
     static SensorController* Instance;
 
     std::atomic<bool> running;
+    std::thread workerThread;
 
     void LaunchThread();
 
@@ -95,7 +97,7 @@ private:
     std::mutex imuMutex;
     std::mutex ahrsMutex;
 
-    int fd;
+    int fd = -1;  // Initialize to invalid fd
 
     SensorController();
     virtual ~SensorController();

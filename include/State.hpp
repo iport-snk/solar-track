@@ -5,6 +5,7 @@
 #include "SensorController.h"
 #include "IntervalRunner.hpp"
 #include "Motors.hpp"
+#include "Globals.hpp"
 // #include "Config.hpp"
 
 enum class TrackerState : uint8_t {
@@ -25,12 +26,7 @@ public:
         auto p = splitToVector(topic, '/');
         std::string resp = "";
         
-        if (p[1] == "move") { 
-            auto params = splitToVector(payload, ',');
-            float az = std::stof(params[1]);
-            float el = std::stof(params[0]);
-            TrackerFSM::handleMoveEl(el); 
-        } else if (p[1] == "stop") TrackerFSM::handleStop();
+        if (p[1] == "stop") TrackerFSM::handleStop();
         else if (p[1] == "auto") TrackerFSM::handleAuto();
         else if (       p[1] == "mu"     ) { Motors::moveU(); } 
         else if (       p[1] == "md"     ) { Motors::moveD(); } 
@@ -41,6 +37,7 @@ public:
         else if (       p[1] == "el"     )  Motors::el(p[2]);
         else if (       p[1] == "saz"    )  Motors::stopAz();
         else if (       p[1] == "poz"    )  resp = Motors::position();
+        else if (       p[1] == "sun"    )  resp = TrackerFSM::sunPosition();
         else if (       p[1] == "relays" )  resp = Motors::relays(); 
 
         return resp;
@@ -51,38 +48,31 @@ public:
         state_ = TrackerState::Idle;
     }
 
-    static void handleAuto() { 
-        trackerThread = setInterval([] {
-            std::cout << "chasing the SUN" << std::endl;
-        }, 1000);
+    static std::string sunPosition() {
+        auto [azimuth, elevation] = Sun::getSunPosition();
+        return std::to_string(azimuth) + "~" + std::to_string(elevation);
     }
 
-    static void handleMoveEl(float el) {
-        if (state_.load() == TrackerState::Moving) return;
-        float elDelta = SensorController::deltaEl(el); 
-        if (elDelta == 0) return;
-        state_ = TrackerState::Moving;
-
-        if (elDelta < 0) Motors::moveD(); 
-        else if (elDelta > 0) Motors::moveU();
-
-        std::thread([=]() {
-            while(true) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-                std::string relays = Motors::relays();
-                auto elDelta = SensorController::deltaEl(el); 
-                bool isMoving = state_.load() == TrackerState::Moving;
-                if (elDelta == 0 || !isMoving) Motors::stopEl(); 
- 
-                if (!isMoving) break;
-
-                if (!Motors::isAzMov && !Motors::isElMov) {
-                    state_.store(TrackerState::Idle);
-                    break;
-                }
-                std::cout  << "el : " << elDelta << std::endl;
+    static void handleAuto() { 
+        trackerThread = setInterval([] {
+            
+            std::string state = (SerialWorker::CMD("MOTORS")).get();
+            bool moving = (state[0] == '1' || state[1] == '1' || state[2] == '1' || state[3] == '1');
+            if (moving) return;  // skip if already moving
+            auto [azimuth, elevation] = Sun::getSunPosition();
+            elevation = 90 - elevation; // convert to elevation from horizon
+            if (azimuth > CFG::azMinDegrees && azimuth < CFG::azMaxDegrees) {
+                auto az_str = SerialWorker::CMD("POZ").get();
+                auto az = std::stoi(az_str.substr(az_str.find('~') + 1));
+                if (std::abs(az - azimuth) > CFG::azThresholdDegrees)  Motors::az(std::to_string(static_cast<int>(azimuth)));
             }
-        }).detach();
+            if (elevation > CFG::elMinDegrees && elevation < CFG::elMaxDegrees) {
+                float roll = SensorController::getRoll();
+                if (std::abs(roll - elevation) > CFG::elThresholdDegrees)  Motors::el(std::to_string(static_cast<int>(elevation)));
+            }
+ 
+
+        }, 20000);
     }
 
     static void onTargetReached() {

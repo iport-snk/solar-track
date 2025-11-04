@@ -26,8 +26,8 @@ inline std::tuple<float, float> getSunPosition() {
     spa.timezone      = 0.0;           // UTC
     spa.delta_ut1     = 0.0;
     spa.delta_t       = 69.0;          // Approx for 2025
-    spa.longitude     = 31.082747;
-    spa.latitude      = 50.434988;
+    spa.longitude     = 31.04526;
+    spa.latitude      = 50.35973;
     spa.elevation     = 150.0;
     spa.pressure      = 1013.25;
     spa.temperature   = 20.0;
@@ -36,7 +36,13 @@ inline std::tuple<float, float> getSunPosition() {
 
     int result = spa_calculate(&spa);
     if (result == 0) {
-        return {spa.azimuth, spa.e};
+        {
+            auto round2 = [](double v) -> float {
+                long long r = static_cast<long long>(v * 100.0 + (v >= 0.0 ? 0.5 : -0.5));
+                return static_cast<float>(r / 100.0);
+            };
+            return { spa.azimuth, spa.e };
+        }
     } else {
         return {-1.0, -1.0}; // Sentinel values for error
     }

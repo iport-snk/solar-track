@@ -3,12 +3,27 @@
 #include "Config.hpp"
 
 SensorController* SensorController::Instance = nullptr;
-SensorController::SensorController() {}
-SensorController::~SensorController() {}
+SensorController::SensorController() : running(false), fd(-1) {}
+
+SensorController::~SensorController() {
+    running = false;
+    if (workerThread.joinable()) {
+        workerThread.join();
+    }
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}
 
 AHRSPacket SensorController::AHRS() {
     std::lock_guard<std::mutex> lock(Instance->ahrsMutex);
     return Instance->ahrs;
+};
+
+float SensorController::getRoll() {
+    std::lock_guard<std::mutex> lock(Instance->ahrsMutex);
+    return (Instance->ahrs.roll * 180.0f / M_PI) * (CFG::invertRoll ? -1 : 1);
 };
 
 IMUPacket SensorController::IMU() {
@@ -20,6 +35,24 @@ void SensorController::Start() {
     if (!Instance) {
         Instance = new SensorController();
         Instance->LaunchThread();
+    }
+};
+
+void SensorController::Stop() {
+    if (Instance) {
+        Instance->running = false;  // Signal thread to stop
+        
+        if (Instance->workerThread.joinable()) {
+            Instance->workerThread.join();  // Wait for thread to finish
+        }
+        
+        if (Instance->fd >= 0) {
+            close(Instance->fd);
+            Instance->fd = -1;
+        }
+        
+        delete Instance;
+        Instance = nullptr;
     }
 };
 
@@ -49,10 +82,8 @@ void SensorController::InitSerial() {
 };
 
 float SensorController::deltaEl(float elDegree) {
-    std::lock_guard<std::mutex> lock(Instance->ahrsMutex);
-
-    float elDelta = elDegree ? (Instance->ahrs.roll  * (180.0 / M_PI) - elDegree) : 0 ;
-    return std::abs(elDelta) > CFG::elThresholdDegrees ? elDelta : 0;
+    float elDelta = std::abs(getRoll() - elDegree);
+    return elDelta > CFG::elThresholdDegrees ? elDelta : 0;
 };
 
 void SensorController::ProcessPaket(PacketType packetType) { 
@@ -67,19 +98,25 @@ void SensorController::ProcessPaket(PacketType packetType) {
 
 void SensorController::LaunchThread() {
     running = true;
-    std::thread([this]() {
+    workerThread = std::thread([this]() {
         Instance->InitSerial();
 
         if (fd < 0) {
             perror("Failed to open serial port");
+            running = false;
             return;
         }
 
         uint8_t byte;
         uint8_t header[6]; // 0: type 1: len
 
-        while (true) {
-            read(fd, &byte, 1);
+        while (running.load()) {  // Check running flag
+            ssize_t bytes_read = read(fd, &byte, 1);
+            if (bytes_read <= 0) {
+                if (!running.load()) break;  // Exit if stopping
+                continue;  // Handle read errors gracefully
+            }
+            
             if (byte == STF) {
                 read(fd, header, 6);
                 ProcessPaket(static_cast<PacketType>(header[0]));
@@ -87,5 +124,7 @@ void SensorController::LaunchThread() {
         }
 
         close(fd);
-    }).detach();
+        fd = -1;  // Mark as closed
+    });
+    // Don't detach - keep thread joinable for proper shutdown
 }

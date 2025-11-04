@@ -5,9 +5,13 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <iostream>
 #include <sys/ioctl.h>   // ioctl()
 #include <SerialWorker.h>
 #include "Config.hpp"
+#include "SensorController.h"
+#include "Globals.hpp"
 
 class Motors {
 public:
@@ -51,10 +55,10 @@ tcflush(m.fd_, TCIOFLUSH);
         if (fd_ >= 0) write(fd_, cmd, strlen(cmd));
     }
 
-    static void moveU() { SerialWorker::SEND("ELCW\n"); }
-    static void moveD() { SerialWorker::SEND("ELCCW\n"); }
-    static void moveE() { SerialWorker::SEND("AZCW\n");  }
-    static void moveW() { SerialWorker::SEND("AZCCW\n"); }
+    static void moveD() { SerialWorker::SEND("ELCW\n"); }
+    static void moveU() { SerialWorker::SEND("ELCCW\n"); }
+    static void moveE() { SerialWorker::SEND("AZCCW\n");  }
+    static void moveW() { SerialWorker::SEND("AZCW\n"); }
     static void stopEl() {SerialWorker::SEND("ELSTOP\n"); }
     static void stopAz() {SerialWorker::SEND("AZSTOP\n"); }
     static void az(std::string angle) {
@@ -65,18 +69,47 @@ tcflush(m.fd_, TCIOFLUSH);
         }).detach();
     }
     static void el(std::string angle) {
-        int _a = 1;
-        SerialWorker::SEND("SNR:EL:" + std::to_string(_a++) + "\n");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        auto future = SerialWorker::CMD("EL:" + angle);
-        std::thread([future = std::move(future), _a]() mutable {
-            while (true) {
-                SerialWorker::SEND("SNR:EL:" + std::to_string(_a++) + "\n");
-                if (future.wait_for(std::chrono::milliseconds(500)) == std::future_status::ready) {
-                    std::string result = future.get();
-                    printf("EL completed: %s (a=%d)\n", result.c_str(), _a);
+        float targetAngle = std::stof(angle);
+        float currentRoll = SensorController::getRoll();
+        
+        if (std::abs(targetAngle - currentRoll) <= CFG::elThresholdDegrees) return;
+        std::string dir = (targetAngle > currentRoll) ? "ELCW" : "ELCCW";
+        SerialWorker::SEND(dir + "\n");
+        std::thread([targetAngle, dir]() mutable {
+            float lastRoll = SensorController::getRoll();
+            auto lastMoveTime = std::chrono::steady_clock::now();
+            
+            while (keep_running) {  // Check global shutdown flag
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                float roll = SensorController::getRoll();
+                
+                // Check if target reached
+                if ((dir == "ELCW" && roll >= targetAngle) || (dir == "ELCCW" && roll <= targetAngle)) {
+                    std::cout << "[Motors] Target reached: " << roll << "°" << std::endl;
+                    SerialWorker::SEND("ELSTOP\n");
                     break;
                 }
+                
+                // Check for stall detection
+                auto currentTime = std::chrono::steady_clock::now();
+                auto timeSinceLastMove = std::chrono::duration_cast<std::chrono::seconds>(currentTime - lastMoveTime).count();
+
+                if (timeSinceLastMove >= CFG::movingTimeoutSecs) {
+                    float rollChange = roll - lastRoll;
+                    bool isMovingCorrectly = (dir == "ELCW" && rollChange >= CFG::elThresholdDegrees) || 
+                                           (dir == "ELCCW" && rollChange <= -CFG::elThresholdDegrees);
+                    
+                    if (isMovingCorrectly) {
+                        // Motor is moving in correct direction, reset stall detection
+                        lastRoll = roll;
+                        lastMoveTime = currentTime;
+                    } else {
+                        std::cout << "[Motors] Stall detected: No movement for " << CFG::movingTimeoutSecs << "s " << std::endl;
+                        SerialWorker::SEND("ELSTOP\n");
+                        break;
+                    }
+                }
+                
             }
         }).detach();
     }
@@ -89,8 +122,10 @@ tcflush(m.fd_, TCIOFLUSH);
     }
     static std::string position() {
         auto future = SerialWorker::CMD("POZ");
-        std::string state = future.get();
-        return state;
+        std::string arduino = future.get(); // format: "<el>~<az>"
+        std::string roll = std::to_string(static_cast<int>(SensorController::getRoll()));
+        std::string az = arduino.substr(arduino.find('~') + 1);
+        return roll + "~" + az;
     }
     static bool isAzMov;
     static bool isElMov;

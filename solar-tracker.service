@@ -1,0 +1,36 @@
+[Unit]
+Description=Solar Tracker Control Service
+After=network-online.target
+Wants=network-online.target
+Requires=network-online.target
+
+[Service]
+Type=simple
+User=solar
+Group=solar
+WorkingDirectory=/home/solar/solar-track/build
+ExecStartPre=/bin/sleep 10
+ExecStart=/home/solar/solar-track/build/solar-tracker
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Graceful shutdown
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Security settings (relaxed for testing)
+# NoNewPrivileges=true
+# ProtectSystem=strict  
+# ProtectHome=true
+# ReadWritePaths=/home/solar/solar-track
+# PrivateTmp=true
+
+# Environment
+Environment=TZ=Europe/Kyiv
+Environment=LD_LIBRARY_PATH=/usr/local/lib
+
+[Install]
+WantedBy=multi-user.target

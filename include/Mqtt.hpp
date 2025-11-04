@@ -8,6 +8,8 @@
 #include <string_view>
 #include <charconv>
 #include <tuple>
+#include <iostream>
+#include <thread>
 
 #include <MQTTClient.h>
 #include "State.hpp"
@@ -43,7 +45,19 @@ public:
             nullptr
         );
 
-        connect();  // Initial connection
+        connect();  // Initial connection attempt
+        
+        // Start reconnection thread
+        keep_running_ = true;
+        reconnect_thread_ = std::thread([]() {
+            while (keep_running_) {
+                std::this_thread::sleep_for(std::chrono::seconds(30));
+                if (!connected_ && keep_running_) {
+                    std::cout << "[MQTT] Attempting reconnection..." << std::endl;
+                    connect();
+                }
+            }
+        });
     }
 
     
@@ -53,13 +67,28 @@ public:
 
         MQTTClient_deliveryToken token;
         
+        if (!connected_) {
+            std::cout << "[MQTT] Cannot publish '" << topic << "': Not connected to broker" << std::endl;
+            return;
+        }
+
         int rc = MQTTClient_publish(handle_, topic, strlen(payload), payload, qos, retained, &token);
-        if (rc != MQTTCLIENT_SUCCESS) return;  // Silently fail
+        if (rc != MQTTCLIENT_SUCCESS) {
+            std::cout << "[MQTT] Failed to publish to '" << topic << "': " << getErrorString(rc) << std::endl;
+            connected_ = false;  // Mark as disconnected to trigger reconnection
+            return;
+        }
 
         // MQTTClient_waitForCompletion(handle_, token, 1000);
     }
 
     static void shutdown() {
+        keep_running_ = false;
+        
+        if (reconnect_thread_.joinable()) {
+            reconnect_thread_.join();
+        }
+        
         std::lock_guard<std::mutex> lock(global_mutex_);
         if (connected_) {
             MQTTClient_disconnect(handle_, 1000);
@@ -93,8 +122,39 @@ private:
         int rc = MQTTClient_connect(handle_, &conn_opts);
         if (rc == MQTTCLIENT_SUCCESS) {
             connected_ = true;
+            std::cout << "[MQTT] Connected successfully to broker" << std::endl;
+            
             rc = MQTTClient_subscribe(handle_, "commander/#", 1);
-            if (rc != MQTTCLIENT_SUCCESS) throw std::runtime_error("Failed to subscribe in init()");
+            if (rc != MQTTCLIENT_SUCCESS) {
+                std::cout << "[MQTT] Failed to subscribe to commander/#: " << getErrorString(rc) << std::endl;
+                connected_ = false;
+            } else {
+                std::cout << "[MQTT] Subscribed to commander/# successfully" << std::endl;
+            }
+        } else {
+            std::cout << "[MQTT] Connection failed: " << getErrorString(rc) << std::endl;
+            connected_ = false;
+        }
+    }
+    
+    static const char* getErrorString(int rc) {
+        switch (rc) {
+            case MQTTCLIENT_SUCCESS: return "Success";
+            case MQTTCLIENT_FAILURE: return "Generic failure";
+            case MQTTCLIENT_PERSISTENCE_ERROR: return "Persistence error";
+            case MQTTCLIENT_DISCONNECTED: return "Client disconnected";
+            case MQTTCLIENT_MAX_MESSAGES_INFLIGHT: return "Max messages in-flight";
+            case MQTTCLIENT_BAD_UTF8_STRING: return "Bad UTF8 string";
+            case MQTTCLIENT_NULL_PARAMETER: return "Null parameter";
+            case MQTTCLIENT_TOPICNAME_TRUNCATED: return "Topic name truncated";
+            case MQTTCLIENT_BAD_STRUCTURE: return "Bad structure";
+            case MQTTCLIENT_BAD_QOS: return "Bad QoS";
+            case MQTTCLIENT_SSL_NOT_SUPPORTED: return "SSL not supported";
+            case MQTTCLIENT_BAD_MQTT_VERSION: return "Bad MQTT version";
+            case MQTTCLIENT_BAD_PROTOCOL: return "Bad protocol";
+            case MQTTCLIENT_BAD_MQTT_OPTION: return "Bad MQTT option";
+            case MQTTCLIENT_WRONG_MQTT_VERSION: return "Wrong MQTT version";
+            default: return "Unknown error";
         }
     }
 
@@ -102,5 +162,7 @@ private:
     static inline MQTTClient handle_ = nullptr;
     static inline bool initialized_ = false;
     static inline bool connected_ = false;
+    static inline bool keep_running_ = false;
     static inline std::mutex global_mutex_;
+    static inline std::thread reconnect_thread_;
 };

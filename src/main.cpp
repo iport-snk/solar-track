@@ -3,8 +3,24 @@
 #include "SensorController.h"
 #include "Mqtt.hpp"
 #include "SerialWorker.h"
+#include "Globals.hpp"
+#include <signal.h>
+
+volatile bool keep_running = true;
+
+void signal_handler(int signal) {
+    std::cout << "\nReceived signal " << signal << ", shutting down..." << std::endl;
+    SerialWorker::SEND("ELSTOP\n");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    SerialWorker::SEND("AZSTOP\n");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    keep_running = false;
+}
 
 int main() {
+    // Register signal handlers for graceful shutdown
+    signal(SIGINT, signal_handler);   // Ctrl+C
+    signal(SIGTERM, signal_handler);  // Termination request
     SerialWorker::init();
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
@@ -31,14 +47,15 @@ int main() {
     
 
 
-
-    while(true) {
-        //AHRSPacket ahrs = SensorController::AHRS();
-        //std::cout << "  Q:  " << ahrs.Qw  << " | " << ahrs.Qx  << " | " << ahrs.Qy  << " | " << ahrs.Qz  << " | " << std::endl;
-        //std::cout << "  H:  " << ahrs.pitch  << " | " << ahrs.roll  << " | " << ahrs.yaw   << std::endl;
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
+    while(keep_running) {
+        #ifndef NDEBUG
+        //float rollDegrees = SensorController::getRoll();
+        //std::cout << "  Roll:  " << static_cast<int>(rollDegrees) << "°" << std::endl;
+        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        #endif
     }
     
+    // Cleanup before exit
+    SensorController::Stop();
     return 0;
 }
