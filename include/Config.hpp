@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string_view>
 #include <charconv>
+#include "ini.h"
 
 namespace CFG {
     inline const float elThresholdDegrees = 3;
@@ -21,23 +22,42 @@ namespace CFG {
     inline const int motorTimeoutMs = 500;
     inline const int relayPinForward = 17;
     inline const int relayPinReverse = 18;
-    inline std::string mqttTopic = "solar/tracker";
+
+    inline const int sunTrackingIntervalSecs = 10;
+    
 
     inline const char* ttyMotors = "/dev/ttyACM0";
     inline const char* ttyIMU = "/dev/ttyUSB0";
 
     //inline const char* mqtt = "tcp://broker.hivemq.com:1883";
-     inline const char* mqttUri = "ssl://328ac36e4a744857a34cec7961c455fd.s1.eu.hivemq.cloud:8883";
-
-    inline const char* mqttUser = "rpi5solar";
-    inline const char* mqttPass = "Vc!Q4pf9Kku*WFW";
+    inline std::string mqttTopic = "solar";
+    inline std::string mqttUri = "ssl://328ac36e4a744857a34cec7961c455fd.s1.eu.hivemq.cloud:8883";
+    inline std::string mqttUser = "rpi5solar";
+    inline std::string mqttPass = "Vc!Q4pf9Kku*WFW";
 
     inline const bool invertRoll = true;
+    inline void init() {
+        inih::INIReader r{ std::string(getenv("HOME")) +  "/solar.ini" };
+        try { CFG::mqttUser =   r.Get<std::string>("mqtt", "user"); } catch (...) {   };
+        try { CFG::mqttUri =    r.Get<std::string>("mqtt", "uri"); } catch (...) {   };
+        try { CFG::mqttPass =   r.Get<std::string>("mqtt", "pass"); } catch (...) {   };
+        try { CFG::mqttTopic =  r.Get<std::string>("mqtt", "topic"); } catch (...) {   };
+    }
 };
 
-constexpr auto splitToVector = []( std::string_view view, char delimiter) {
-    std::vector<std::string> result;
-    for (auto&& subrange : view  | std::views::split(delimiter))  result.emplace_back(subrange.begin(), subrange.end());
+template<typename T>
+inline std::vector<T> splitToVector( std::string_view view, char delimiter) {
+    std::vector<T> result;
+    for (auto&& subrange : view | std::views::split(delimiter)) {
+        if constexpr (std::is_same_v<T, std::string>) {
+            result.emplace_back(subrange.begin(), subrange.end());
+        } else {
+            T value{};
+            auto str = std::string(subrange.begin(), subrange.end());
+            auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), value);
+            if (ec == std::errc()) result.push_back(value);
+        }
+    }
     return result;
 };
 

@@ -1,5 +1,5 @@
 // 50 - 310 : azimuth border limits
-int16_t azimuth_offset = 11; // Calibration offset if needed
+int16_t azimuth_offset = 152; // Calibration offset if needed
 
 // TESTS
 float elCurr = 6;
@@ -319,6 +319,8 @@ void motorMove(char* cmd, uint16_t angle) {
 // 🔍 Read current in amps
 void readCurrentAmps(MotorSettings* motor) {
   int raw = analogRead(motor->CURR_PIN);
+  delay(10);
+  raw = analogRead(motor->CURR_PIN);
   float voltage = raw * (5.0 / 1023.0);
 
   

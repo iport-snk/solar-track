@@ -12,13 +12,13 @@
 #include <thread>
 
 #include <MQTTClient.h>
-#include "State.hpp"
-#include "Motors.hpp"
+
 #include "Config.hpp"
 
 class MqttClient {
 public:
-    static void init() {
+    static void init(std::function<void(const std::string_view&, const std::string_view&)> on_message = nullptr) {
+        on_message_ = on_message;
         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
         std::lock_guard<std::mutex> lock(global_mutex_);
@@ -27,7 +27,7 @@ public:
         client_id_ = "graviton_" + std::to_string(now);
         initialized_ = true;
 
-        int rc = MQTTClient_create(&handle_, CFG::mqttUri, client_id_.c_str(), MQTTCLIENT_PERSISTENCE_NONE, nullptr);
+        int rc = MQTTClient_create(&handle_, CFG::mqttUri.c_str(), client_id_.c_str(), MQTTCLIENT_PERSISTENCE_NONE, nullptr);
         if (rc != MQTTCLIENT_SUCCESS)
             throw std::runtime_error("Failed to create MQTT client");
 
@@ -35,9 +35,10 @@ public:
             [](void* context, char* topicName, int topicLen, MQTTClient_message* message) -> int {
                 std::string_view topic(topicName, topicLen > 0 ? topicLen : std::strlen(topicName));
                 std::string_view payload(static_cast<char*>(message->payload), message->payloadlen);
-                
-                std::string resp = TrackerFSM::handleCmd(topic, payload);
-                if (resp.size() > 0)  publish("response/cmd", resp);
+                // std::cout << "Message arrived on topic: " << std::string(topic) << " with payload: " << std::string(payload) << std::endl;
+                // std::string resp = TrackerFSM::handleCmd(topic, payload);
+                // if (resp.size() > 0)  publish(resp);
+                if (on_message_) on_message_(topic, payload);
                 MQTTClient_freeMessage(&message);
                 MQTTClient_free(topicName);
                 return 1;
@@ -47,57 +48,53 @@ public:
 
         connect();  // Initial connection attempt
         
-        // Start reconnection thread
         keep_running_ = true;
-        reconnect_thread_ = std::thread([]() {
-            while (keep_running_) {
-                std::this_thread::sleep_for(std::chrono::seconds(30));
-                if (!connected_ && keep_running_) {
-                    std::cout << "[MQTT] Attempting reconnection..." << std::endl;
-                    connect();
-                }
+        last_reconnect_ = std::chrono::steady_clock::now();
+    }
+
+
+
+    static void loop() {
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_reconnect_ > std::chrono::seconds(5)) {
+            last_reconnect_ = now;
+            if (!MQTTClient_isConnected(handle_) && keep_running_) {
+                std::cout << "[MQTT] Attempting reconnection..." << std::endl;
+                connect();
             }
-        });
+        }
     }
 
     
-    static void publish(const char* topic, std::string msg, int qos = 1, bool retained = false) {
+    static void publish(std::string msg, int qos = 1, bool retained = false) {
         std::lock_guard<std::mutex> lock(global_mutex_);
         const char* payload = msg.c_str();
+        const char* topic = (CFG::mqttTopic + "/re").c_str();
 
         MQTTClient_deliveryToken token;
         
-        if (!connected_) {
-            std::cout << "[MQTT] Cannot publish '" << topic << "': Not connected to broker" << std::endl;
-            return;
-        }
-
         int rc = MQTTClient_publish(handle_, topic, strlen(payload), payload, qos, retained, &token);
         if (rc != MQTTCLIENT_SUCCESS) {
             std::cout << "[MQTT] Failed to publish to '" << topic << "': " << getErrorString(rc) << std::endl;
-            connected_ = false;  // Mark as disconnected to trigger reconnection
             return;
         }
 
-        // MQTTClient_waitForCompletion(handle_, token, 1000);
+
     }
 
     static void shutdown() {
         keep_running_ = false;
         
-        if (reconnect_thread_.joinable()) {
-            reconnect_thread_.join();
-        }
         
         std::lock_guard<std::mutex> lock(global_mutex_);
-        if (connected_) {
+        if (MQTTClient_isConnected(handle_)) {
             MQTTClient_disconnect(handle_, 1000);
             MQTTClient_destroy(&handle_);
-            connected_ = false;
         }
     }
 
 private:
+    static inline std::chrono::steady_clock::time_point last_reconnect_;
     MqttClient() = default;
 
     static void connect() {
@@ -113,27 +110,25 @@ private:
         ssl_opts.enabledCipherSuites = NULL;
 
         conn_opts.ssl = &ssl_opts;
-        conn_opts.username = "rpi5solar";
-        conn_opts.password = "Vc!Q4pf9Kku*WFW";
+        conn_opts.username = CFG::mqttUser.c_str();
+        conn_opts.password = CFG::mqttPass.c_str();
         conn_opts.connectTimeout = 5;
         conn_opts.keepAliveInterval = 20;
         conn_opts.cleansession = 1;
 
         int rc = MQTTClient_connect(handle_, &conn_opts);
         if (rc == MQTTCLIENT_SUCCESS) {
-            connected_ = true;
             std::cout << "[MQTT] Connected successfully to broker" << std::endl;
+            std::string topic = CFG::mqttTopic + "/cmd/#";
             
-            rc = MQTTClient_subscribe(handle_, "commander/#", 1);
+            rc = MQTTClient_subscribe(handle_, topic.c_str(), 1);
             if (rc != MQTTCLIENT_SUCCESS) {
-                std::cout << "[MQTT] Failed to subscribe to commander/#: " << getErrorString(rc) << std::endl;
-                connected_ = false;
+                std::cout << "[MQTT] Failed to subscribe to " << topic << ": " << getErrorString(rc) << std::endl;
             } else {
-                std::cout << "[MQTT] Subscribed to commander/# successfully" << std::endl;
+                std::cout << "[MQTT] Subscribed to " << topic << " successfully" << std::endl;
             }
         } else {
             std::cout << "[MQTT] Connection failed: " << getErrorString(rc) << std::endl;
-            connected_ = false;
         }
     }
     
@@ -165,4 +160,5 @@ private:
     static inline bool keep_running_ = false;
     static inline std::mutex global_mutex_;
     static inline std::thread reconnect_thread_;
+    static inline std::function<void(const std::string_view&, const std::string_view&)> on_message_;
 };

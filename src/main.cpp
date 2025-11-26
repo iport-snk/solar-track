@@ -1,61 +1,34 @@
-
-#include "Sun.hpp"
-#include "SensorController.h"
-#include "Mqtt.hpp"
-#include "SerialWorker.h"
-#include "Globals.hpp"
-#include <signal.h>
-
-volatile bool keep_running = true;
-
-void signal_handler(int signal) {
-    std::cout << "\nReceived signal " << signal << ", shutting down..." << std::endl;
-    SerialWorker::SEND("ELSTOP\n");
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    SerialWorker::SEND("AZSTOP\n");
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    keep_running = false;
+extern "C" {
+#include <MQTTClient.h>
 }
+#include <iostream>
+#include <string>
+#include <cstring>
+#include <chrono>
+#include <thread>
+#include <functional>
+#include "SerialWorker.h"
+#include "Mqtt.hpp"
+#include "Cmd.hpp"
+#include "Config.hpp"
+#include "ImuController.hpp"
+#include "Cmd.hpp"
 
-int main() {
-    // Register signal handlers for graceful shutdown
-    signal(SIGINT, signal_handler);   // Ctrl+C
-    signal(SIGTERM, signal_handler);  // Termination request
+int main() { 
+    CFG::init();
     SerialWorker::init();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-
-    // TODO: need to go through check list ensuring Arduino functioning well
-    // do the same with N100
-    auto future = SerialWorker::CMD("PING");
-    std::string response = future.get();
-    std::cout << response << std::endl;
-
-
-    SensorController::Start();
-    MqttClient::init();
-
-    //
-    // =========== END of tests
-    
-
-  
-
-    auto [azimuth, elevation] = Sun::getSunPosition();
-    std::cout << "Sun : " << azimuth << " |  " << elevation << std::endl;
-
-    
-
-
-    while(keep_running) {
-        #ifndef NDEBUG
-        //float rollDegrees = SensorController::getRoll();
-        //std::cout << "  Roll:  " << static_cast<int>(rollDegrees) << "°" << std::endl;
-        //std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        #endif
+    ImuController::init();
+    MqttClient::init([](const std::string_view& topic, const std::string_view& payload) {
+        CMD::handleCommand(std::string(topic), std::string(payload));
+        std::cout << "[CALLBACK] Topic: " << std::string(topic) << ", Payload: " << std::string(payload) << std::endl;
+    });
+    CMD::init();
+    while (true) {
+        MqttClient::loop(); 
+        CMD::loop();
+        std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-    
-    // Cleanup before exit
-    SensorController::Stop();
+    MqttClient::shutdown();
     return 0;
+
 }

@@ -410,7 +410,9 @@ Ensure your system can connect to:
 arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200
 
 # Compile and upload Arduino code
+sudo systemctl stop solar-tracker      # Release /dev/ttyACM0
 cd ardu-relays && make all
+sudo systemctl start solar-tracker
 ```
 
 ### Service Management
