@@ -9,6 +9,7 @@
 #include "ini.h"
 
 namespace CFG {
+    inline const std::string ver = "2.0.1";
     inline const float elThresholdDegrees = 3;
     inline const float azThresholdDegrees = 3;
 
@@ -23,7 +24,7 @@ namespace CFG {
     inline const int relayPinForward = 17;
     inline const int relayPinReverse = 18;
 
-    inline const int sunTrackingIntervalSecs = 10;
+    inline const int sunTrackingIntervalSecs = 300;
     
 
     inline const char* ttyMotors = "/dev/ttyACM0";

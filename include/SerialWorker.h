@@ -30,6 +30,7 @@ public:
     //    return instance_->cmd(command);
     //};
     static void SEND(const std::string& msg) {
+        std::lock_guard<std::mutex> lock(instance_->mutex_);
         write(instance_->fd_, msg.c_str(), msg.size());
     };
     SerialWorker() {
@@ -125,14 +126,12 @@ private:
         std::promise<std::string> promise;
         auto future = promise.get_future();
         auto expires_at = std::chrono::steady_clock::now() + ttl;
-
         {
             std::lock_guard<std::mutex> lock(instance_->mutex_);
             auto key = command.substr(0, command.find(':'));
             instance_->pending_[key] = std::make_tuple(std::move(promise), expires_at);
+            instance_->sendCommand(command);
         }
-
-        instance_->sendCommand(command);
         return future;
     };
 

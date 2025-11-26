@@ -9,9 +9,10 @@
 #include "BS_thread_pool.hpp"
 #include "ImuController.hpp"
 #include "Sun.hpp"
+#include "DBG.hpp"
 
 
-inline BS::thread_pool pool;
+inline BS::thread_pool pool(6);
 
 class CMD { 
             
@@ -48,7 +49,10 @@ class CMD {
             return roll + "~" + az;
         }
 
-        static std::string move(int axis, float target) { 
+        static std::string move(int axis, int target, int postponeMs = 0) {
+            if (postponeMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(postponeMs));
+            DBG::log("[CMD] Move ", (axis == 0 ? "EL" : "AZ"), " to ", target);
+
             if (instance_->moving[axis]) return std::string("ALREADY MOVING ") + (axis == 0 ? "EL" : "AZ");
             std::string _r = poz();
             int curr = (splitToVector<int>(_r, '~'))[axis];
@@ -65,7 +69,7 @@ class CMD {
                 curr = (splitToVector<int>(_r, '~'))[axis];
                 if (std::abs(curr - prev) < 2) { 
                     unchangedCount++;
-                    std::cout << "Unchanged: " << curr << " : " << prev << std::endl;
+                    std::cout << (axis == 0 ? "EL" : "AZ") << " Unchanged: " << curr << " : " << prev << std::endl;
                 } else {
                     unchangedCount = 0;
                     prev = curr;
@@ -78,33 +82,37 @@ class CMD {
             return std::string("MOVING FINISHED ") + (axis == 0 ? "EL" : "AZ");
         }
 
+        static std::string status() {
+            std::string resp =  instance_->tracking ? (instance_->parking ? "PARKING" : "TRACKING") : "IDLE";
+            resp += std::string("\n EL: ") + (instance_->moving[0] ? "MOVING" : "IDLE");
+            resp += std::string("\n AZ: ") + (instance_->moving[1] ? "MOVING" : "IDLE");
+            resp += std::string("\n VER: ") + CFG::ver;
+            return resp;
+        }
+
         static void handleCommand(const std::string_view m_topic, const std::string_view m_payload ) {
             auto p = splitToVector<std::string>(m_topic, '/');
-            
+            int delay = std::stoi(std::string(m_payload));
+            std::string resp = "";
             if (        p[2] == "auto") { instance_->tracking = true;  instance_->parking = false; }
             else if (   p[2] == "stop") { instance_->tracking = false; instance_->parking = false; }
-            else if (   p[2] == "status") {
-                    std::string resp =  instance_->tracking ? (instance_->parking ? "PARKING" : "TRACKING") : "IDLE";
-                    resp += std::string("\n EL:") + (instance_->moving[0] ? "MOVING" : "IDLE");
-                    resp += std::string("\n AZ:") + (instance_->moving[1] ? "MOVING" : "IDLE");
-                    MqttClient::publish( resp );
-
-            }
+            else if (   p[2] == "status") resp = CMD::status();
             else {
-                pool.detach_task( [p] () {
-                std::string resp = "";
-                if (        p[2] == "relays")       resp = SerialWorker::cmd(std::string("MOTORS"));
-                else if (   p[2] == "poz")          resp = poz();
-                else if (   p[2] == "sun")          resp = sunPosition();
-                else if (   p[2] == "az")           resp = move(1, std::stoi(p[3]));
-                else if (   p[2] == "el")           resp = move(0, std::stoi(p[3]));
-                else if (   p[2] == "sel")          stopMoving(0);
-                else if (   p[2] == "saz")          stopMoving(1);
-                else if (CMD::mCmd.contains(p[2]))  resp = move(CMD::mCmd.find(p[2])->second);
+                pool.detach_task( [p, delay] () {
+                    std::string resp = "";
+                    if (        p[2] == "relays")       resp = SerialWorker::cmd(std::string("MOTORS"));
+                    else if (   p[2] == "poz")          resp = poz();
+                    else if (   p[2] == "sun")          resp = sunPosition();
+                    else if (   p[2] == "az")           resp = move(1, std::stoi(p[3]), delay);
+                    else if (   p[2] == "el")           resp = move(0, std::stoi(p[3]), delay);
+                    else if (   p[2] == "sel")          stopMoving(0);
+                    else if (   p[2] == "saz")          stopMoving(1);
+                    else if (CMD::mCmd.contains(p[2]))  resp = move(CMD::mCmd.find(p[2])->second);
 
-                if (!resp.empty()) MqttClient::publish( resp );
-            });
+                    if (!resp.empty()) MqttClient::publish( resp );
+                });
             }
+            if (!resp.empty()) MqttClient::publish( resp );
         } 
     private:
         static void chaseTheSun() {
@@ -113,7 +121,7 @@ class CMD {
             if (elevation < 4.0) {
                 if (!instance_->parking) {
                     CMD::handleCommand("solar/cmd/el/0", "0"); // Move to parking position once
-                    CMD::handleCommand("solar/cmd/az/180", "0"); 
+                    CMD::handleCommand("solar/cmd/az/180", "100"); 
                     std::cout << "[CMD] Sun below horizon, parking..." << std::endl;
                     instance_->parking = true;
                 }
@@ -123,7 +131,7 @@ class CMD {
             elevation = 90.0 - elevation;
             elevation = elevation > CFG::elMaxDegrees ? CFG::elMaxDegrees : elevation;
             CMD::handleCommand("solar/cmd/el/" + std::to_string(static_cast<int>(elevation)), "0");
-            CMD::handleCommand("solar/cmd/az/" + std::to_string(static_cast<int>(azimuth)), "0");
+            CMD::handleCommand("solar/cmd/az/" + std::to_string(static_cast<int>(azimuth)), "100");
         }
         static inline std::unordered_map<std::string, std::string> mCmd = {
             {"mu", "ELCCW"}, {"md", "ELCW"}, {"me", "AZCCW"}, {"mw", "AZCW"} 
