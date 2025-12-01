@@ -106,9 +106,28 @@ void setup() {
   }
 }
 
-uint16_t readAzimuth() {
-  float sensor_degrees = (analogRead(AZ_SENSOR_PIN) / 1023.0) * 360.0;
-  return ((int16_t)sensor_degrees - azimuth_offset + 360) % 360;
+
+int16_t readAzimuth() {
+  const uint8_t N = 30;
+  const float MAX_DEVIATION = 4.0;
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    float readings[N];
+    float sum = 0;
+    float minVal = 360.0, maxVal = 0.0;
+    for (uint8_t i = 0; i < N; ++i) {
+      float sensor_degrees = (analogRead(AZ_SENSOR_PIN) / 1023.0) * 360.0;
+      float value = ((int16_t)sensor_degrees - azimuth_offset + 360) % 360;
+      readings[i] = value;
+      sum += value;
+      if (value < minVal) minVal = value;
+      if (value > maxVal) maxVal = value;
+      delay(2);
+    }
+    if ((maxVal - minVal) <= MAX_DEVIATION) {
+      return (int16_t)(sum / N);
+    }
+  }
+  return -1;
 }
 
 void readVoltage() {

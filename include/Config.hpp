@@ -9,7 +9,7 @@
 #include "ini.h"
 
 namespace CFG {
-    inline const std::string ver = "2.0.1";
+    inline const std::string ver = "2.0.3";
     inline const float elThresholdDegrees = 3;
     inline const float azThresholdDegrees = 3;
 

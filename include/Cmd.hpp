@@ -49,6 +49,10 @@ class CMD {
             return roll + "~" + az;
         }
 
+        static bool sensorErr(int axis, int poz) {
+            return (axis == 1) && (poz < 10 || poz > 340);
+        }
+
         static std::string move(int axis, int target, int postponeMs = 0) {
             if (postponeMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(postponeMs));
             DBG::log("[CMD] Move ", (axis == 0 ? "EL" : "AZ"), " to ", target);
@@ -57,10 +61,12 @@ class CMD {
             std::string _r = poz();
             int curr = (splitToVector<int>(_r, '~'))[axis];
             if (std::abs(target - curr) < 3) return std::string("ALREADY AT POSITION ") + (axis == 0 ? "EL" : "AZ");
+            if (sensorErr(axis, curr))  return "AZ SENSOR OUT OF RANGE";
+
             int prev = curr;
             int unchangedCount = 0;
-            
-            std::string cmd = std::string(axis == 0 ? "EL" : "AZ") + (target > curr ? "CW" : "CCW");
+            std::string dir = target > curr ? "CW" : "CCW";
+            std::string cmd = std::string(axis == 0 ? "EL" : "AZ") + dir;
             SerialWorker::SEND(cmd + "\n");
             instance_->moving[axis] = true;
             while (instance_->moving[axis]) {
@@ -74,9 +80,13 @@ class CMD {
                     unchangedCount = 0;
                     prev = curr;
                 }
-                if ( (target > curr && (curr + 1) >= target) || (target < curr && (curr - 1) <= target) || unchangedCount > 2 ) {
+                if (    (dir == "CW" && curr >= target) || 
+                        (dir == "CCW" && curr <= target) || 
+                        unchangedCount > 2 || sensorErr(axis, curr)
+                    ) {
                     instance_->moving[axis] = false;
                     SerialWorker::SEND( (axis == 0 ? "ELSTOP\n" : "AZSTOP\n") );
+                    if (sensorErr(axis, curr)) SerialWorker::SEND("AZ SENSOR OUT OF RANGE\n");
                 }
             }
             return std::string("MOVING FINISHED ") + (axis == 0 ? "EL" : "AZ");
