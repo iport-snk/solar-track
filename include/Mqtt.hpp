@@ -58,6 +58,7 @@ public:
         auto now = std::chrono::steady_clock::now();
         if (now - last_reconnect_ > std::chrono::seconds(5)) {
             last_reconnect_ = now;
+            std::lock_guard<std::mutex> lock(global_mutex_);
             if (!MQTTClient_isConnected(handle_) && keep_running_) {
                 std::cout << "[MQTT] Attempting reconnection..." << std::endl;
                 connect();
@@ -65,21 +66,19 @@ public:
         }
     }
 
-    
-    static void publish(std::string msg, int qos = 1, bool retained = false) {
+    static void publish(const std::string& topic, const std::string& msg, int qos = 1, bool retained = false) {
         std::lock_guard<std::mutex> lock(global_mutex_);
+        if (!MQTTClient_isConnected(handle_)) return;
         const char* payload = msg.c_str();
-        const char* topic = (CFG::mqttTopic + "/re").c_str();
-
         MQTTClient_deliveryToken token;
-        
-        int rc = MQTTClient_publish(handle_, topic, strlen(payload), payload, qos, retained, &token);
+        int rc = MQTTClient_publish(handle_, topic.c_str(), strlen(payload), payload, qos, retained, &token);
         if (rc != MQTTCLIENT_SUCCESS) {
             std::cout << "[MQTT] Failed to publish to '" << topic << "': " << getErrorString(rc) << std::endl;
-            return;
         }
+    }
 
-
+    static void publish(const std::string& msg, int qos = 1, bool retained = false) {
+        publish(CFG::mqttTopic + "/re", msg, qos, retained);
     }
 
     static void shutdown() {

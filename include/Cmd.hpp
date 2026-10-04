@@ -25,6 +25,27 @@ class CMD {
         }
         static void loop() {
             static int sunTrackingSec = 0;
+
+            bool movingNow = instance_->moving[0] || instance_->moving[1];
+            bool settled = false;
+            if (!movingNow) {
+                auto now = std::chrono::steady_clock::now();
+                settled = (now - instance_->lastMotionEndTime_ >= std::chrono::seconds(5));
+            }
+
+            bool shouldSample = instance_->tracking && settled;
+            ImuController::setVibrationSampling(shouldSample);
+
+            if (sunTrackingSec == CFG::sunTrackingIntervalSecs - 2) {
+                if (instance_->tracking) {
+                    std::string report = ImuController::getAndResetVibrationReport();
+                    if (!report.empty()) {
+                        DBG::log("[VIB] Telemetry: ", report);
+                        MqttClient::publish(CFG::mqttTopic + "/telemetry/vibration", report);
+                    }
+                }
+            }
+
             if (++sunTrackingSec >= CFG::sunTrackingIntervalSecs) { 
                 sunTrackingSec = 0;
                 if (instance_->tracking) instance_->chaseTheSun();
@@ -32,7 +53,10 @@ class CMD {
         }
         static void stopMoving(int axis) {
             SerialWorker::SEND(std::string( axis == 0 ? "EL" : "AZ") + "STOP\n");
-            if (instance_->moving[axis]) instance_->moving[axis] = false;
+            if (instance_->moving[axis]) {
+                instance_->moving[axis] = false;
+                instance_->lastMotionEndTime_ = std::chrono::steady_clock::now();
+            }
         }   
         static std::string sunPosition() {
             auto [azimuth, elevation] = Sun::getSunPosition();
@@ -100,10 +124,13 @@ class CMD {
                         unchangedCount > 2 || sensorErr(axis, curr)
                     ) {
                     instance_->moving[axis] = false;
+                    instance_->lastMotionEndTime_ = std::chrono::steady_clock::now();
                     SerialWorker::SEND( (axis == 0 ? "ELSTOP\n" : "AZSTOP\n") );
                     if (sensorErr(axis, curr)) SerialWorker::SEND("AZ SENSOR OUT OF RANGE\n");
                 }
             }
+            instance_->moving[axis] = false;
+            instance_->lastMotionEndTime_ = std::chrono::steady_clock::now();
             return std::string("MOVING FINISHED ") + (axis == 0 ? "EL" : "AZ");
         }
 
@@ -112,6 +139,7 @@ class CMD {
             resp += std::string("\n EL: ") + (instance_->moving[0] ? "MOVING" : "IDLE");
             resp += std::string("\n AZ: ") + (instance_->moving[1] ? "MOVING" : "IDLE");
             resp += std::string("\n IMU: ") + (ImuController::isHealthy() ? "OK" : "TIMEOUT");
+            resp += std::string("\n VIB: ") + (ImuController::isVibrationSampling() ? "SAMPLING" : "PAUSED");
             resp += std::string("\n AZ_OFF: ") + getAzOffset();
             resp += std::string("\n VER: ") + CFG::ver;
             return resp;
@@ -142,6 +170,7 @@ class CMD {
             if (action == "auto") { instance_->tracking = true;  instance_->parking = false; }
             else if (action == "stop") { instance_->tracking = false; instance_->parking = false; }
             else if (action == "status") resp = CMD::status();
+            else if (action == "vibration") resp = ImuController::getCurrentVibrationReport();
             else if (action == "azoff") {
                 if (cmdIdx + 1 < p.size() && !p[cmdIdx + 1].empty()) {
                     try {
@@ -205,4 +234,5 @@ class CMD {
         bool tracking = false;
         bool parking = false;
         std::array<std::atomic<bool>, 2> moving = {false, false}; // moving[0]=El, moving[1]=Az
+        std::chrono::steady_clock::time_point lastMotionEndTime_ = std::chrono::steady_clock::now();
 };

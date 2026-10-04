@@ -20,8 +20,84 @@
 #include <algorithm>
 #include <limits>
 #include <cmath>
+#include <sstream>
+#include <iomanip>
 #include "Config.hpp"
 #include "DBG.hpp"
+
+struct VibrationStats {
+    uint64_t acc_samples = 0;
+    double acc_sum = 0.0;
+    double acc_sq_sum = 0.0;
+    float acc_min = 999.0f;
+    float acc_max = 0.0f;
+    float acc_max_dev = 0.0f;
+    float acc_std = 0.0f;
+
+    uint64_t gyro_samples = 0;
+    double gyro_speed_sum = 0.0;     // deg/s
+    double gyro_speed_sq_sum = 0.0;  // (deg/s)^2
+    float gyro_max_speed = 0.0f;     // peak deg/s
+    double gyro_angular_path = 0.0;  // total accumulated deg
+    float gyro_rms = 0.0f;
+    std::chrono::steady_clock::time_point last_gyro_time{};
+
+    std::chrono::steady_clock::time_point window_start{};
+    double duration_sec = 0.0;
+
+    void reset() {
+        acc_samples = 0;
+        acc_sum = 0.0;
+        acc_sq_sum = 0.0;
+        acc_min = 999.0f;
+        acc_max = 0.0f;
+        acc_max_dev = 0.0f;
+        acc_std = 0.0f;
+
+        gyro_samples = 0;
+        gyro_speed_sum = 0.0;
+        gyro_speed_sq_sum = 0.0;
+        gyro_max_speed = 0.0f;
+        gyro_angular_path = 0.0;
+        gyro_rms = 0.0f;
+        last_gyro_time = std::chrono::steady_clock::time_point{};
+
+        window_start = std::chrono::steady_clock::now();
+        duration_sec = 0.0;
+    }
+
+    void finalize() {
+        if (window_start.time_since_epoch().count() > 0) {
+            auto now = std::chrono::steady_clock::now();
+            duration_sec = std::chrono::duration<double>(now - window_start).count();
+        }
+        if (acc_samples > 1) {
+            double mean_a = acc_sum / acc_samples;
+            double var_a = (acc_sq_sum / acc_samples) - (mean_a * mean_a);
+            acc_std = std::sqrt(std::max(0.0, var_a));
+            acc_max_dev = std::max(std::abs(acc_max - mean_a), std::abs(acc_min - mean_a));
+        }
+        if (gyro_samples > 0) {
+            double var_g = gyro_speed_sq_sum / gyro_samples;
+            gyro_rms = std::sqrt(std::max(0.0, var_g));
+        }
+    }
+
+    std::string toJson() const {
+        std::ostringstream ss;
+        ss << std::fixed;
+        ss << "{"
+           << "\"samples\":" << acc_samples << ","
+           << "\"duration_s\":" << std::setprecision(1) << duration_sec << ","
+           << "\"acc_std_g\":" << std::setprecision(4) << acc_std << ","
+           << "\"acc_max_g\":" << std::setprecision(3) << acc_max_dev << ","
+           << "\"gyro_rms_dps\":" << std::setprecision(3) << gyro_rms << ","
+           << "\"gyro_max_dps\":" << std::setprecision(2) << gyro_max_speed << ","
+           << "\"gyro_deg\":" << std::setprecision(2) << gyro_angular_path
+           << "}";
+        return ss.str();
+    }
+};
 
 #pragma pack(push, 1)
 struct IMUPacket {
@@ -98,6 +174,38 @@ public:
         std::lock_guard<std::mutex> lock(instance_->ahrsMutex);
         auto now = std::chrono::steady_clock::now();
         return (now - instance_->lastAhrsTime_ <= std::chrono::seconds(2));
+    }
+
+    static void setVibrationSampling(bool enable) {
+        if (!instance_) return;
+        bool prev = instance_->sampling_enabled_.exchange(enable);
+        if (!prev && enable) {
+            std::lock_guard<std::mutex> lock(instance_->vibrationMutex_);
+            instance_->vibrationStats_.reset();
+        }
+    }
+
+    static bool isVibrationSampling() {
+        if (!instance_) return false;
+        return instance_->sampling_enabled_.load();
+    }
+
+    static std::string getAndResetVibrationReport() {
+        if (!instance_) return "";
+        std::lock_guard<std::mutex> lock(instance_->vibrationMutex_);
+        if (instance_->vibrationStats_.acc_samples < 50) return "";
+        instance_->vibrationStats_.finalize();
+        std::string json = instance_->vibrationStats_.toJson();
+        instance_->vibrationStats_.reset();
+        return json;
+    }
+
+    static std::string getCurrentVibrationReport() {
+        if (!instance_) return "{}";
+        std::lock_guard<std::mutex> lock(instance_->vibrationMutex_);
+        VibrationStats copy = instance_->vibrationStats_;
+        copy.finalize();
+        return copy.toJson();
     }
 
     ImuController() {
@@ -205,6 +313,27 @@ private:
                     ahrs = packet;
                     lastAhrsTime_ = std::chrono::steady_clock::now();
                 }
+                if (sampling_enabled_.load(std::memory_order_relaxed)) {
+                    float gx = packet.rollSpeed;
+                    float gy = packet.pitchSpeed;
+                    float gz = packet.yawSpeed;
+                    float gyro_mag = std::sqrt(gx * gx + gy * gy + gz * gz);
+                    float gyro_dps = gyro_mag * (180.0f / static_cast<float>(M_PI));
+
+                    auto now = std::chrono::steady_clock::now();
+                    std::lock_guard<std::mutex> lock(vibrationMutex_);
+                    if (vibrationStats_.last_gyro_time.time_since_epoch().count() > 0) {
+                        double dt = std::chrono::duration<double>(now - vibrationStats_.last_gyro_time).count();
+                        if (dt > 0.0 && dt < 0.5) {
+                            vibrationStats_.gyro_angular_path += (gyro_dps * dt);
+                        }
+                    }
+                    vibrationStats_.last_gyro_time = now;
+                    vibrationStats_.gyro_samples++;
+                    vibrationStats_.gyro_speed_sum += gyro_dps;
+                    vibrationStats_.gyro_speed_sq_sum += (static_cast<double>(gyro_dps) * gyro_dps);
+                    if (gyro_dps > vibrationStats_.gyro_max_speed) vibrationStats_.gyro_max_speed = gyro_dps;
+                }
             } else if (type == static_cast<uint8_t>(PacketType::IMU)) {
                 IMUPacket packet;
                 std::memcpy(&packet, buf.data() + 7, sizeof(IMUPacket));
@@ -212,6 +341,23 @@ private:
                     std::lock_guard<std::mutex> lock(imuMutex);
                     imu = packet;
                     lastImuTime_ = std::chrono::steady_clock::now();
+                }
+                if (sampling_enabled_.load(std::memory_order_relaxed)) {
+                    float ax = packet.Accelerometer_X;
+                    float ay = packet.Accelerometer_Y;
+                    float az = packet.Accelerometer_Z;
+                    float a_mag = std::sqrt(ax * ax + ay * ay + az * az);
+                    if (a_mag > 4.0f) a_mag /= 9.80665f; // Normalize m/s^2 to g
+
+                    std::lock_guard<std::mutex> lock(vibrationMutex_);
+                    if (vibrationStats_.acc_samples == 0) {
+                        vibrationStats_.window_start = std::chrono::steady_clock::now();
+                    }
+                    vibrationStats_.acc_samples++;
+                    vibrationStats_.acc_sum += a_mag;
+                    vibrationStats_.acc_sq_sum += (static_cast<double>(a_mag) * a_mag);
+                    if (a_mag < vibrationStats_.acc_min) vibrationStats_.acc_min = a_mag;
+                    if (a_mag > vibrationStats_.acc_max) vibrationStats_.acc_max = a_mag;
                 }
             }
 
@@ -277,6 +423,10 @@ private:
     std::chrono::steady_clock::time_point lastPacketTime_{};
 
     int fd = -1;
+
+    std::atomic<bool> sampling_enabled_{false};
+    std::mutex vibrationMutex_;
+    VibrationStats vibrationStats_{};
 
     static inline std::unique_ptr<ImuController> instance_ = nullptr;
 };
