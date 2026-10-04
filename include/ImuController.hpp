@@ -76,13 +76,6 @@ struct VibrationStats {
             double var_a = (acc_sq_sum / acc_samples) - (mean_a * mean_a);
             acc_std = std::sqrt(std::max(0.0, var_a));
             acc_max_dev = std::max(std::abs(acc_max - mean_a), std::abs(acc_min - mean_a));
-
-            if (acc_std < CFG::accStdNoiseThresholdG) {
-                acc_std = 0.0f;
-            }
-            if (acc_max_dev < CFG::accMaxNoiseThresholdG) {
-                acc_max_dev = 0.0f;
-            }
         }
         if (gyro_samples > 0) {
             double var_g = gyro_speed_sq_sum / gyro_samples;
@@ -326,23 +319,20 @@ private:
                     float gz = packet.yawSpeed;
                     float gyro_mag = std::sqrt(gx * gx + gy * gy + gz * gz);
                     float gyro_dps = gyro_mag * (180.0f / static_cast<float>(M_PI));
-                    float eff_gyro = (gyro_dps >= CFG::gyroNoiseDeadbandDps) ? gyro_dps : 0.0f;
 
                     auto now = std::chrono::steady_clock::now();
                     std::lock_guard<std::mutex> lock(vibrationMutex_);
                     if (vibrationStats_.last_gyro_time.time_since_epoch().count() > 0) {
                         double dt = std::chrono::duration<double>(now - vibrationStats_.last_gyro_time).count();
                         if (dt > 0.0 && dt < 0.5) {
-                            vibrationStats_.gyro_angular_path += (eff_gyro * dt);
+                            vibrationStats_.gyro_angular_path += (gyro_dps * dt);
                         }
                     }
                     vibrationStats_.last_gyro_time = now;
                     vibrationStats_.gyro_samples++;
-                    vibrationStats_.gyro_speed_sum += eff_gyro;
-                    vibrationStats_.gyro_speed_sq_sum += (static_cast<double>(eff_gyro) * eff_gyro);
-                    if (gyro_dps >= CFG::gyroNoiseDeadbandDps && gyro_dps > vibrationStats_.gyro_max_speed) {
-                        vibrationStats_.gyro_max_speed = gyro_dps;
-                    }
+                    vibrationStats_.gyro_speed_sum += gyro_dps;
+                    vibrationStats_.gyro_speed_sq_sum += (static_cast<double>(gyro_dps) * gyro_dps);
+                    if (gyro_dps > vibrationStats_.gyro_max_speed) vibrationStats_.gyro_max_speed = gyro_dps;
                 }
             } else if (type == static_cast<uint8_t>(PacketType::IMU)) {
                 IMUPacket packet;
