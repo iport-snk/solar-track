@@ -41,6 +41,7 @@ class CMD {
                     std::string report = ImuController::getAndResetVibrationReport();
                     if (!report.empty()) {
                         DBG::log("[VIB] Telemetry: ", report);
+                        MqttClient::publish(report); // send to solar/re so standard clients see it
                         MqttClient::publish(CFG::mqttTopic + "/telemetry/vibration", report);
                     }
                 }
