@@ -1,13 +1,5 @@
-// 50 - 310 : azimuth border limits
-int16_t azimuth_offset = 152; // Calibration offset if needed
+#include <EEPROM.h>
 
-// TESTS
-float elCurr = 6;
-float azCurr = 6;
-// END TESTS
-#define STF_BYTE 0xAA
-bool dump_amp = false;
-unsigned long now;  // Use unsigned long to match millis() return type
 // 🧭 Motor state definitions
 enum MotorState {
   IDLE,
@@ -29,7 +21,7 @@ uint8_t AZ_SENSOR_PIN = A7;
 uint16_t tolerance = 2;  // Tolerance in degrees for reaching target
 
 
-// �🧰 Motor configuration struct
+// 🧰 Motor configuration struct
 struct MotorSettings {
   uint8_t ID;
   uint8_t CURR_PIN;
@@ -49,6 +41,32 @@ struct MotorSettings {
   ERRORS err;
 };
 
+// 50 - 310 : azimuth border limits
+int16_t azimuth_offset = 152; // Calibration offset if needed
+const uint8_t EEPROM_MAGIC = 0xA5;
+const int EEPROM_OFFSET_ADDR = 1;
+
+void saveAzimuthOffset(int16_t offset) {
+  EEPROM.update(0, EEPROM_MAGIC);
+  EEPROM.put(EEPROM_OFFSET_ADDR, offset);
+}
+
+void loadAzimuthOffset() {
+  if (EEPROM.read(0) == EEPROM_MAGIC) {
+    EEPROM.get(EEPROM_OFFSET_ADDR, azimuth_offset);
+  } else {
+    saveAzimuthOffset(azimuth_offset);
+  }
+}
+
+// TESTS
+float elCurr = 6;
+float azCurr = 6;
+// END TESTS
+#define STF_BYTE 0xAA
+bool dump_amp = false;
+unsigned long now;  // Use unsigned long to match millis() return type
+
 // 🧵 Motor array: Elevation and Azimuth
 MotorSettings MOTORS[] = {
   {1, A0, 9, 10, 10, 5, 200, 0, -1, -1, 0,  90,  false, 0, IDLE, ERRORS::NONE},     // Elevation
@@ -61,7 +79,7 @@ char cmd[CMD_BUF_SIZE];
 int cmdIndex = 0;
 
 // 🏷️ Convert state to string
-const char* prnState(MotorSettings* motor, unsigned long duration) {
+void prnState(MotorSettings* motor, unsigned long duration) {
   char prn[64];
   
   const char* result = nullptr;
@@ -84,6 +102,7 @@ void setup() {
   pinMode(13, OUTPUT);
 
   Serial.begin(115200);
+  loadAzimuthOffset();
   now = millis();  // Initialize timing
   
 
@@ -221,6 +240,13 @@ void execCmd(const char* input) {
     RelayState(buff);
   } else if (strcmp(cmdCode, "POZ") == 0) {
     sprintf(buff + strlen(buff), "%u~%u", (uint16_t)MOTORS[0].angle_current, (uint16_t)MOTORS[1].angle_current);
+  } else if (strcmp(cmdCode, "AZOFF") == 0) {
+    if (*delim == ':' && strlen(delim + 1) > 0) {
+      int16_t new_off = atoi(delim + 1);
+      azimuth_offset = new_off;
+      saveAzimuthOffset(new_off);
+    }
+    sprintf(buff + strlen(buff), "%d", azimuth_offset);
   } else if (strcmp(cmdCode, "AZ") == 0 || strcmp(cmdCode, "EL") == 0) {
     const char* targetAngleStr = delim + 1;
     if (strlen(targetAngleStr) > 0) motorMove(cmdCode, atof(targetAngleStr));

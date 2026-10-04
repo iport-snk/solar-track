@@ -58,8 +58,15 @@ public:
     };
     static std::string cmd(const std::string &command) {
         auto future = instance_->cmd_(command);
-        std::string state = future.get();
-        return state;
+        if (future.wait_for(std::chrono::milliseconds(1000)) == std::future_status::ready) {
+            return future.get();
+        }
+        {
+            std::lock_guard<std::mutex> lock(instance_->mutex_);
+            auto key = command.substr(0, command.find(':'));
+            instance_->pending_.erase(key);
+        }
+        return "TIMEOUT";
     }
 
 private:

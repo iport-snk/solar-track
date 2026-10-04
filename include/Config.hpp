@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string_view>
 #include <charconv>
+#include <fstream>
 #include "ini.h"
 
 namespace CFG {
@@ -38,11 +39,21 @@ namespace CFG {
 
     inline const bool invertRoll = true;
     inline void init() {
-        inih::INIReader r{ std::string(getenv("HOME")) +  "/solar.ini" };
-        try { CFG::mqttUser =   r.Get<std::string>("mqtt", "user"); } catch (...) {   };
-        try { CFG::mqttUri =    r.Get<std::string>("mqtt", "uri"); } catch (...) {   };
-        try { CFG::mqttPass =   r.Get<std::string>("mqtt", "pass"); } catch (...) {   };
-        try { CFG::mqttTopic =  r.Get<std::string>("mqtt", "topic"); } catch (...) {   };
+        try {
+            std::string homePath = std::string(getenv("HOME") ? getenv("HOME") : "") + "/solar.ini";
+            std::string path = homePath;
+            std::ifstream f(homePath);
+            if (!f.good()) {
+                path = "solar.ini";
+            }
+            inih::INIReader r{ path };
+            try { CFG::mqttUser =   r.Get<std::string>("mqtt", "user"); } catch (...) {   };
+            try { CFG::mqttUri =    r.Get<std::string>("mqtt", "uri"); } catch (...) {   };
+            try { CFG::mqttPass =   r.Get<std::string>("mqtt", "pass"); } catch (...) {   };
+            try { CFG::mqttTopic =  r.Get<std::string>("mqtt", "topic"); } catch (...) {   };
+        } catch (...) {
+            // Fall back to built-in defaults
+        }
     }
 };
 

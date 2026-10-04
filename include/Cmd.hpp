@@ -21,6 +21,7 @@ class CMD {
             SerialWorker::SEND("ELSTOP\n");
             SerialWorker::SEND("AZSTOP\n");
             if (!instance_) instance_ = std::make_unique<CMD>();
+            DBG::log("[CMD] Arduino Azimuth Offset: ", getAzOffset());
         }
         static void loop() {
             static int sunTrackingSec = 0;
@@ -44,9 +45,19 @@ class CMD {
         }
         static std::string poz() {
             auto az = SerialWorker::cmd("POZ");
-            std::string roll = std::to_string(static_cast<int>(ImuController::getRoll()));
-            az = az.substr(az.find('~') + 1);
-            return roll + "~" + az;
+            float rollVal = ImuController::getRoll();
+            std::string roll = std::isnan(rollVal) ? "ERR" : std::to_string(static_cast<int>(rollVal));
+            size_t sep = az.find('~');
+            std::string azStr = (sep != std::string::npos) ? az.substr(sep + 1) : "ERR";
+            return roll + "~" + azStr;
+        }
+
+        static std::string getAzOffset() {
+            return SerialWorker::cmd("AZOFF");
+        }
+
+        static std::string setAzOffset(int offset) {
+            return SerialWorker::cmd("AZOFF:" + std::to_string(offset));
         }
 
         static bool sensorErr(int axis, int poz) {
@@ -59,7 +70,9 @@ class CMD {
 
             if (instance_->moving[axis]) return std::string("ALREADY MOVING ") + (axis == 0 ? "EL" : "AZ");
             std::string _r = poz();
-            int curr = (splitToVector<int>(_r, '~'))[axis];
+            auto parts = splitToVector<int>(_r, '~');
+            if (parts.size() <= static_cast<size_t>(axis)) return "ERR READING POSITION";
+            int curr = parts[axis];
             if (std::abs(target - curr) < 3) return std::string("ALREADY AT POSITION ") + (axis == 0 ? "EL" : "AZ");
             if (sensorErr(axis, curr))  return "AZ SENSOR OUT OF RANGE";
 
@@ -72,7 +85,9 @@ class CMD {
             while (instance_->moving[axis]) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
                 _r = poz();
-                curr = (splitToVector<int>(_r, '~'))[axis];
+                auto curParts = splitToVector<int>(_r, '~');
+                if (curParts.size() <= static_cast<size_t>(axis)) continue;
+                curr = curParts[axis];
                 if (std::abs(curr - prev) < 2) { 
                     unchangedCount++;
                     std::cout << (axis == 0 ? "EL" : "AZ") << " Unchanged: " << curr << " : " << prev << std::endl;
@@ -96,28 +111,68 @@ class CMD {
             std::string resp =  instance_->tracking ? (instance_->parking ? "PARKING" : "TRACKING") : "IDLE";
             resp += std::string("\n EL: ") + (instance_->moving[0] ? "MOVING" : "IDLE");
             resp += std::string("\n AZ: ") + (instance_->moving[1] ? "MOVING" : "IDLE");
+            resp += std::string("\n IMU: ") + (ImuController::isHealthy() ? "OK" : "TIMEOUT");
+            resp += std::string("\n AZ_OFF: ") + getAzOffset();
             resp += std::string("\n VER: ") + CFG::ver;
             return resp;
         }
 
         static void handleCommand(const std::string_view m_topic, const std::string_view m_payload ) {
             auto p = splitToVector<std::string>(m_topic, '/');
-            int delay = std::stoi(std::string(m_payload));
+            if (p.size() < 3) return;
+
+            // Support both "solar/cmd/<action>" (p[2]) and "solar/tracker/cmd/<action>" (after "cmd")
+            size_t cmdIdx = 2;
+            for (size_t i = 0; i < p.size(); ++i) {
+                if (p[i] == "cmd" && i + 1 < p.size()) {
+                    cmdIdx = i + 1;
+                    break;
+                }
+            }
+            std::string action = p[cmdIdx];
+
+            int delay = 0;
+            try {
+                if (!m_payload.empty()) delay = std::stoi(std::string(m_payload));
+            } catch (...) {
+                delay = 0;
+            }
+
             std::string resp = "";
-            if (        p[2] == "auto") { instance_->tracking = true;  instance_->parking = false; }
-            else if (   p[2] == "stop") { instance_->tracking = false; instance_->parking = false; }
-            else if (   p[2] == "status") resp = CMD::status();
-            else {
-                pool.detach_task( [p, delay] () {
+            if (action == "auto") { instance_->tracking = true;  instance_->parking = false; }
+            else if (action == "stop") { instance_->tracking = false; instance_->parking = false; }
+            else if (action == "status") resp = CMD::status();
+            else if (action == "azoff") {
+                if (cmdIdx + 1 < p.size() && !p[cmdIdx + 1].empty()) {
+                    try {
+                        resp = "AZOFF: " + setAzOffset(std::stoi(p[cmdIdx + 1]));
+                    } catch (...) {
+                        resp = "AZOFF: ERR";
+                    }
+                } else if (!m_payload.empty() && m_payload != "?" && m_payload != "0") {
+                    try {
+                        resp = "AZOFF: " + setAzOffset(std::stoi(std::string(m_payload)));
+                    } catch (...) {
+                        resp = "AZOFF: ERR";
+                    }
+                } else {
+                    resp = "AZOFF: " + getAzOffset();
+                }
+            } else {
+                pool.detach_task( [p, cmdIdx, action, delay] () {
                     std::string resp = "";
-                    if (        p[2] == "relays")       resp = SerialWorker::cmd(std::string("MOTORS"));
-                    else if (   p[2] == "poz")          resp = poz();
-                    else if (   p[2] == "sun")          resp = sunPosition();
-                    else if (   p[2] == "az")           resp = move(1, std::stoi(p[3]), delay);
-                    else if (   p[2] == "el")           resp = move(0, std::stoi(p[3]), delay);
-                    else if (   p[2] == "sel")          stopMoving(0);
-                    else if (   p[2] == "saz")          stopMoving(1);
-                    else if (CMD::mCmd.contains(p[2]))  resp = move(CMD::mCmd.find(p[2])->second);
+                    if (action == "relays") resp = SerialWorker::cmd(std::string("MOTORS"));
+                    else if (action == "poz") resp = poz();
+                    else if (action == "sun") resp = sunPosition();
+                    else if (action == "az" && cmdIdx + 1 < p.size()) {
+                        try { resp = move(1, std::stoi(p[cmdIdx + 1]), delay); } catch (...) {}
+                    }
+                    else if (action == "el" && cmdIdx + 1 < p.size()) {
+                        try { resp = move(0, std::stoi(p[cmdIdx + 1]), delay); } catch (...) {}
+                    }
+                    else if (action == "sel") stopMoving(0);
+                    else if (action == "saz") stopMoving(1);
+                    else if (CMD::mCmd.contains(action)) resp = move(CMD::mCmd.find(action)->second);
 
                     if (!resp.empty()) MqttClient::publish( resp );
                 });
