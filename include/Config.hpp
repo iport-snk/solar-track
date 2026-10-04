@@ -27,6 +27,10 @@ namespace CFG {
 
     inline const int sunTrackingIntervalSecs = 300;
     
+    // Noise filtering thresholds for vibration & wind monitoring (values below are treated as 0)
+    inline const float gyroNoiseDeadbandDps = 0.35f;    // deg/s: values below this are treated as 0 (noise floor)
+    inline const float accStdNoiseThresholdG = 0.0015f;  // g: RMS vibration below this is treated as 0
+    inline const float accMaxNoiseThresholdG = 0.006f;   // g: peak acceleration below this is treated as 0
 
     inline const char* ttyMotors = "/dev/ttyACM0";
     inline const char* ttyIMU = "/dev/ttyUSB0";
